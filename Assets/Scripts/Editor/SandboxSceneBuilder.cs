@@ -350,6 +350,9 @@ public static class SandboxSceneBuilder
         serialized.FindProperty("_ball").objectReferenceValue = ball;
         serialized.FindProperty("_rim").objectReferenceValue = rim;
         serialized.FindProperty("_backboard").objectReferenceValue = rim.parent.Find("Backboard");
+        // Wide green window while testing; narrow it later for challenge.
+        serialized.FindProperty("_greenStart").floatValue = 0.6f;
+        serialized.FindProperty("_greenEnd").floatValue = 0.95f;
         serialized.ApplyModifiedPropertiesWithoutUndo();
 
         ShotMeterDisplay meter = player.gameObject.AddComponent<ShotMeterDisplay>();

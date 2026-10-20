@@ -2,11 +2,17 @@ using UnityEngine;
 
 // Hold-and-release shooting. Hold Shoot (Square / Space) to fill the shot
 // meter from 0 to 1, and let go to shoot:
-//   - inside the green window = a perfect shot, straight at the rim center (guaranteed make)
+//   - inside the green window = a perfect shot, aimed straight at the rim center.
+//     It's still a real physics shot (nothing forces it in), so it goes in
+//     because the arc is right, and anything in its way can still knock it off.
 //   - early = the shot falls short, late = the shot goes long; the further from
 //     the green, the bigger the miss, plus a little random left/right scatter
 //   - holding until the meter is full shoots automatically (as a late release)
+// Every shot picks a random launch angle from a range that depends on distance:
+// close shots go up steeper (they start below the rim and need to drop in from
+// above), long shots flatter, like real shooters.
 // The ball is teleported to the player's hands for now because there's no dribbling yet.
+// Later idea (not built yet): a green shot nobody touches is guaranteed to go in.
 public class PlayerShooter : MonoBehaviour
 {
     [SerializeField] private PlayerInputReader _input;
@@ -22,19 +28,25 @@ public class PlayerShooter : MonoBehaviour
     [Tooltip("How far in front of the player's center the ball is released, in meters.")]
     [SerializeField] private float _releaseForward = 0.3f;
 
-    [Header("Arc")]
-    [Tooltip("Launch angle above horizontal, in degrees. Good shooters release around 45-55.")]
-    [SerializeField, Range(20f, 75f)] private float _launchAngle = 52f;
+    [Header("Arc (launch angle above horizontal, in degrees)")]
+    [Tooltip("Shots from this close (meters from the rim, along the floor) or closer use the close-shot angle range.")]
+    [SerializeField] private float _closeShotDistance = 1.5f;
+    [Tooltip("Shots from this far or farther use the long-shot angle range. In between, the range blends smoothly from one to the other.")]
+    [SerializeField] private float _longShotDistance = 6.5f;
+    [Tooltip("Lowest and highest launch angle for close shots (x = lowest, y = highest). Below about 58 degrees, shots from 1-1.5 m clip the front rim.")]
+    [SerializeField] private Vector2 _closeShotAngles = new Vector2(60f, 66f);
+    [Tooltip("Lowest and highest launch angle for long shots (x = lowest, y = highest). Real jump shots and threes leave the hand at roughly 45-52 degrees.")]
+    [SerializeField] private Vector2 _longShotAngles = new Vector2(46f, 52f);
     [Tooltip("Backspin in revolutions per second. Real jump shots have about 2-3.")]
     [SerializeField] private float _backspin = 2.5f;
 
     [Header("Shot meter timing")]
     [Tooltip("Seconds to fill the meter from empty to full while holding Shoot.")]
     [SerializeField] private float _meterFillTime = 1f;
-    [Tooltip("Where the green window starts on the meter (0 = bottom, 1 = top).")]
-    [SerializeField, Range(0f, 1f)] private float _greenStart = 0.8f;
+    [Tooltip("Where the green window starts on the meter (0 = bottom, 1 = top). Wide for now to make testing easy; narrow it later for challenge.")]
+    [SerializeField, Range(0f, 1f)] private float _greenStart = 0.6f;
     [Tooltip("Where the green window ends on the meter. Above this is a late release.")]
-    [SerializeField, Range(0f, 1f)] private float _greenEnd = 0.9f;
+    [SerializeField, Range(0f, 1f)] private float _greenEnd = 0.95f;
 
     [Header("Misses (outside the green)")]
     [Tooltip("How far short or long the shot lands, in meters, per unit of meter missed. With 3, releasing 0.05 outside the green misses by 15 cm.")]
@@ -60,6 +72,7 @@ public class PlayerShooter : MonoBehaviour
     public float LastReleaseFill { get; private set; }
     public float LastReleaseTime { get; private set; } = float.NegativeInfinity;
     public bool LastReleaseWasGreen { get; private set; }
+    public float LastLaunchAngle { get; private set; }
     public float GreenStart => _greenStart;
     public float GreenEnd => _greenEnd;
 
@@ -107,10 +120,10 @@ public class PlayerShooter : MonoBehaviour
         if (fill < _greenStart) timingError = fill - _greenStart;
         else if (fill > _greenEnd) timingError = fill - _greenEnd;
 
-        Shoot(timingError);
+        Shoot(LastReleaseWasGreen, timingError);
     }
 
-    private void Shoot(float timingError)
+    private void Shoot(bool green, float timingError)
     {
         if (_ball == null || _rim == null) return;
 
@@ -122,7 +135,6 @@ public class PlayerShooter : MonoBehaviour
         release.y = _releaseHeight;
 
         Vector3 aimPoint = _rim.position;
-        bool green = timingError == 0f;
         if (!green)
         {
             if (ShouldBank(toRim)) aimPoint = GetBankTarget();
@@ -135,10 +147,26 @@ public class PlayerShooter : MonoBehaviour
             aimPoint += sideways * (Random.Range(-1f, 1f) * _aimErrorPerMeter * toRim.magnitude);
         }
 
-        if (!ShotMath.TryGetLaunchVelocity(release, aimPoint, _launchAngle, out Vector3 velocity)) return;
+        Vector3 releaseToRim = _rim.position - release;
+        releaseToRim.y = 0f;
+        float launchAngle = PickLaunchAngle(releaseToRim.magnitude);
+        if (!ShotMath.TryGetLaunchVelocity(release, aimPoint, launchAngle, out Vector3 velocity)) return;
 
+        LastLaunchAngle = launchAngle;
         _ball.Place(release);
         _ball.Launch(velocity, ShotMath.GetBackspin(aimPoint - release, _backspin));
+        Debug.Log($"Shot: {releaseToRim.magnitude:0.0} m, {launchAngle:0.0} deg, {(green ? "GREEN" : $"timing off by {timingError:+0.00;-0.00}")}");
+    }
+
+    // Picks a random launch angle for a shot from this far away (meters, along the floor).
+    // Close and long shots each have their own range; in between, both ends of
+    // the range slide smoothly from the close values to the long values.
+    private float PickLaunchAngle(float distance)
+    {
+        float t = Mathf.InverseLerp(_closeShotDistance, _longShotDistance, distance);   // 0 = close, 1 = long
+        float lowest = Mathf.Lerp(_closeShotAngles.x, _longShotAngles.x, t);
+        float highest = Mathf.Lerp(_closeShotAngles.y, _longShotAngles.y, t);
+        return Random.Range(lowest, highest);
     }
 
     private bool ShouldBank(Vector3 toRim)

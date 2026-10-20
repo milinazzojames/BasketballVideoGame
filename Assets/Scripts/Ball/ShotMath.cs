@@ -29,6 +29,14 @@ public static class ShotMath
         float speed = Mathf.Sqrt(gravity * distance * distance / denominator);
         Vector3 direction = flat.normalized * Mathf.Cos(angle) + Vector3.up * Mathf.Sin(angle);
         velocity = direction * speed;
+
+        // The formula above is for a perfectly smooth curve. Unity moves the ball
+        // in small steps (Fixed Timestep), and each step it adds gravity to the
+        // speed first and then moves the ball. That makes the ball fly half a
+        // step of gravity lower than the smooth curve, which grows to 4-12 cm by
+        // the time it reaches the rim: enough to clip the front rim. Adding half
+        // a step of gravity back makes Unity's stepped path land on the target.
+        velocity -= Physics.gravity * (Time.fixedDeltaTime * 0.5f);
         return true;
     }
 
