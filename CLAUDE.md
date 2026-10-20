@@ -107,7 +107,7 @@ Each step is meant to be one or a few small PRs. Check off as they land.
 
 0. [x] Repo setup: Unity `.gitignore`, `.gitattributes` for LFS, this `CLAUDE.md`
 1. [ ] Create the Unity project (Universal 3D) and install the Input System package
-2. [ ] Sandbox scene: flat floor, one hoop (rim, backboard, pole) at real dimensions, simple camera
+2. [x] Sandbox scene: flat floor, one hoop (rim, backboard, pole) at real dimensions, simple camera
 3. [ ] Input Actions asset with the starter layout (Move and Sprint wired up first)
 4. [ ] Player movement: capsule moves with the left stick, analog speed, acceleration/deceleration, sprint on R2
 5. [ ] Ball physics: a ball that bounces and rolls realistically and collides correctly with rim and backboard
@@ -122,4 +122,4 @@ After this, revisit the plan: 1v1, animation, visuals, and game logic.
 ## Open questions
 
 - No LICENSE yet (all rights reserved by default). Decide before inviting contributors.
-- Camera style (broadcast side view vs. behind-the-player) — decide during step 2.
+- ~~Camera style~~ Decided in step 2: **behind-the-player view** (what NBA 2K calls the "2K cam"), see `BehindPlayerCamera`.
