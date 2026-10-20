@@ -77,41 +77,11 @@ public class BallTestLauncher : MonoBehaviour
         Vector2 error = Random.insideUnitCircle * _aimError;
         Vector3 aimPoint = _rim.position + new Vector3(error.x, 0f, error.y);
 
+        if (!ShotMath.TryGetLaunchVelocity(release, aimPoint, _launchAngle, out Vector3 velocity)) return;
+
         _ball.Place(release);
-        _ball.Launch(GetLaunchVelocity(release, aimPoint), GetBackspin(aimPoint - release));
+        _ball.Launch(velocity, ShotMath.GetBackspin(aimPoint - release, _backspin));
         _previousVerticalVelocity = 0f;
-    }
-
-    // Projectile math: find the launch speed that, at the chosen angle, makes
-    // the ball's path pass through the target. From the trajectory equation
-    //   h = d*tan(a) - g*d^2 / (2*v^2*cos^2(a))
-    // solved for v:
-    //   v^2 = g*d^2 / (2*cos^2(a) * (d*tan(a) - h))
-    // where d = flat distance, h = height difference, a = launch angle, g = gravity.
-    private Vector3 GetLaunchVelocity(Vector3 from, Vector3 to)
-    {
-        Vector3 flat = to - from;
-        float height = flat.y;
-        flat.y = 0f;
-        float distance = flat.magnitude;
-
-        float angle = _launchAngle * Mathf.Deg2Rad;
-        float gravity = -Physics.gravity.y;
-        float denominator = 2f * Mathf.Cos(angle) * Mathf.Cos(angle) * (distance * Mathf.Tan(angle) - height);
-        if (denominator <= 0f) return Vector3.up * 5f; // angle too flat to reach the target; just pop it up
-
-        float speed = Mathf.Sqrt(gravity * distance * distance / denominator);
-        Vector3 direction = flat.normalized * Mathf.Cos(angle) + Vector3.up * Mathf.Sin(angle);
-        return direction * speed;
-    }
-
-    // Backspin: the top of the ball spins back toward the shooter. For a ball
-    // flying forward, that's a rotation around the axis pointing to the shooter's left.
-    private Vector3 GetBackspin(Vector3 travel)
-    {
-        travel.y = 0f;
-        Vector3 axis = Vector3.Cross(travel.normalized, Vector3.up);
-        return axis * (_backspin * 2f * Mathf.PI);
     }
 
     private void OnGUI()
