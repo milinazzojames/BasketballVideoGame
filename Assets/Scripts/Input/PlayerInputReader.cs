@@ -12,12 +12,17 @@ public class PlayerInputReader : MonoBehaviour
 
     private InputAction _moveAction;
     private InputAction _sprintAction;
+    private InputAction _shootAction;
 
     // Left stick (or WASD), length 0..1. A light push gives a short vector.
     public Vector2 Move { get; private set; }
 
     // How hard R2 (or Left Shift) is pressed, 0..1.
     public float Sprint { get; private set; }
+
+    // Fired once when Shoot (Square / Space) is pressed, and once when it's let go.
+    public event System.Action ShootPressed;
+    public event System.Action ShootReleased;
 
     private void OnEnable()
     {
@@ -26,7 +31,27 @@ public class PlayerInputReader : MonoBehaviour
         InputActionMap map = InputSystem.actions.FindActionMap(_actionMapName, throwIfNotFound: true);
         _moveAction = map.FindAction("Move", throwIfNotFound: true);
         _sprintAction = map.FindAction("Sprint", throwIfNotFound: true);
+        _shootAction = map.FindAction("Shoot", throwIfNotFound: true);
+        // For a button: "performed" fires when it's pressed, "canceled" when it's released.
+        _shootAction.performed += OnShootPerformed;
+        _shootAction.canceled += OnShootCanceled;
         map.Enable();
+    }
+
+    private void OnDisable()
+    {
+        _shootAction.performed -= OnShootPerformed;
+        _shootAction.canceled -= OnShootCanceled;
+    }
+
+    private void OnShootPerformed(InputAction.CallbackContext context)
+    {
+        ShootPressed?.Invoke();
+    }
+
+    private void OnShootCanceled(InputAction.CallbackContext context)
+    {
+        ShootReleased?.Invoke();
     }
 
     // Input is read every rendered frame in Update. Physics scripts pick up

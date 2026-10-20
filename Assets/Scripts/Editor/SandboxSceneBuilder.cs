@@ -34,6 +34,11 @@ public static class SandboxSceneBuilder
     private const float BoardThickness = 0.05f;
     private const float BoardBottomBelowRim = 0.15f;   // rim sits 6 in above the board's bottom edge
     private const float PoleBehindBaseline = 1f;
+    private const float NetLength = 0.45f;             // real nets hang about 15-18 in
+    private const float NetBottomRadius = 0.13f;       // nets taper, so even a swish brushes the strands
+    private const int NetColumns = 12;                 // strands around the rim
+    private const int NetRows = 4;                     // rows of diamonds top to bottom
+    private const float NetStrandWidth = 0.008f;
     private const float LineWidth = 0.05f;
 
     // Stand-in player: a capsule the size of a 6'6" (1.98 m) player.
@@ -45,7 +50,9 @@ public static class SandboxSceneBuilder
     // Size 7 basketball.
     private const float BallDiameter = 0.24f;
     private const float BallMass = 0.62f;
-    private const float BallAirDrag = 0.1f;            // Rigidbody linear damping; a light stand-in for air resistance
+    // Rigidbody linear damping. Kept at 0 because the shot math (ShotMath) assumes
+    // no air drag; any drag here makes every shot fall short and hit the front rim.
+    private const float BallAirDrag = 0f;
     private const float BallRollingDrag = 0.3f;        // Rigidbody angular damping; makes a rolling ball slow down
 
     // Bounciness and friction for each surface. Unity averages the ball's value
@@ -88,6 +95,7 @@ public static class SandboxSceneBuilder
         SetUpCamera(player, rim);
         Basketball ball = BuildBall();
         BuildBallTester(ball, player, rim);
+        AddShooter(player, ball, rim);
 
         EditorSceneManager.SaveScene(scene, ScenePath);
         AddSceneToBuildSettings();
@@ -169,6 +177,8 @@ public static class SandboxSceneBuilder
             segment.GetComponent<Collider>().sharedMaterial = rimPhysics;
         }
 
+        BuildNet(rim, ringRadius);
+
         // Bracket joining the back of the rim to the backboard.
         float rimBackZ = rimCenterZ + RimInnerRadius + RimTubeRadius * 2f;
         float bracketLength = boardFaceZ - rimBackZ;
@@ -192,6 +202,38 @@ public static class SandboxSceneBuilder
             poleMat);
 
         return rim;
+    }
+
+    // The net is two parts on one object at the rim center: NetSway draws the
+    // strands and makes them move when the ball touches them, and a trigger
+    // volume with HoopNet slows the ball down as it drops through.
+    private static void BuildNet(Transform rim, float topRadius)
+    {
+        GameObject net = new GameObject("Net");
+        net.transform.SetParent(rim, false);
+
+        // Trigger volume filling the inside of the net. A capsule's height includes its
+        // rounded ends, so it's a little taller than the net to cover the whole length.
+        // It's shifted a bit lower than the net so a ball bouncing on top of the rim
+        // isn't slowed; it only catches the ball once it has started dropping through.
+        CapsuleCollider trigger = net.AddComponent<CapsuleCollider>();
+        trigger.isTrigger = true;
+        trigger.radius = NetBottomRadius + 0.05f;
+        trigger.height = NetLength + 0.1f;
+        trigger.center = new Vector3(0f, -NetLength / 2f - 0.1f, 0f);
+        net.AddComponent<HoopNet>();
+
+        NetSway sway = net.AddComponent<NetSway>();
+        SerializedObject serialized = new SerializedObject(sway);
+        serialized.FindProperty("_length").floatValue = NetLength;
+        serialized.FindProperty("_topRadius").floatValue = topRadius;
+        serialized.FindProperty("_bottomRadius").floatValue = NetBottomRadius;
+        serialized.FindProperty("_columns").intValue = NetColumns;
+        serialized.FindProperty("_rows").intValue = NetRows;
+        serialized.FindProperty("_strandWidth").floatValue = NetStrandWidth;
+        serialized.FindProperty("_material").objectReferenceValue = GetMaterial("Net", Color.white);
+        serialized.ApplyModifiedPropertiesWithoutUndo();
+        sway.BuildLines();
     }
 
     private static Transform BuildPlayerStandIn()
@@ -300,6 +342,25 @@ public static class SandboxSceneBuilder
         serialized.ApplyModifiedPropertiesWithoutUndo();
     }
 
+    private static void AddShooter(Transform player, Basketball ball, Transform rim)
+    {
+        PlayerShooter shooter = player.gameObject.AddComponent<PlayerShooter>();
+        SerializedObject serialized = new SerializedObject(shooter);
+        serialized.FindProperty("_input").objectReferenceValue = player.GetComponent<PlayerInputReader>();
+        serialized.FindProperty("_ball").objectReferenceValue = ball;
+        serialized.FindProperty("_rim").objectReferenceValue = rim;
+        serialized.FindProperty("_backboard").objectReferenceValue = rim.parent.Find("Backboard");
+        serialized.ApplyModifiedPropertiesWithoutUndo();
+
+        ShotMeterDisplay meter = player.gameObject.AddComponent<ShotMeterDisplay>();
+        SerializedObject meterSettings = new SerializedObject(meter);
+        meterSettings.FindProperty("_shooter").objectReferenceValue = shooter;
+        meterSettings.FindProperty("_trackMaterial").objectReferenceValue = GetMaterial("MeterTrack", Color.white, unlit: true);
+        meterSettings.FindProperty("_greenMaterial").objectReferenceValue = GetMaterial("MeterGreen", new Color(0.1f, 0.85f, 0.25f), unlit: true);
+        meterSettings.FindProperty("_markerMaterial").objectReferenceValue = GetMaterial("MeterMarker", new Color(0.1f, 0.1f, 0.1f), unlit: true);
+        meterSettings.ApplyModifiedPropertiesWithoutUndo();
+    }
+
     // These live in Edit > Project Settings (Time and Physics). Setting them here,
     // through Unity's own settings objects, keeps them in sync with this scene.
     private static void ApplyProjectPhysicsSettings()
@@ -362,7 +423,8 @@ public static class SandboxSceneBuilder
 
     // Materials are saved as asset files; materials that only exist in memory
     // wouldn't be saved with the scene.
-    private static Material GetMaterial(string name, Color color)
+    // Unlit materials ignore lighting and show their exact color, which suits UI like the shot meter.
+    private static Material GetMaterial(string name, Color color, bool unlit = false)
     {
         EnsureFolder(MaterialFolder);
         string path = $"{MaterialFolder}/{name}.mat";
@@ -370,7 +432,7 @@ public static class SandboxSceneBuilder
         Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
         if (material == null)
         {
-            material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            material = new Material(Shader.Find(unlit ? "Universal Render Pipeline/Unlit" : "Universal Render Pipeline/Lit"));
             AssetDatabase.CreateAsset(material, path);
         }
 
