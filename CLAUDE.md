@@ -4,7 +4,7 @@ Guidance for Claude (and any AI coding agent) working in this repository.
 
 ## Project
 
-A 3D basketball video game built in **Unity 6 LTS with C#**.
+A 3D basketball video game built in **Unity 6 (6000.6.6f1) with C#**.
 Owner: Jimmy (GitHub: `milinazzojames`). Repo: https://github.com/milinazzojames/BasketballVideoGame
 
 ## Current focus: controls and physics
@@ -45,7 +45,7 @@ If a task tempts you toward out-of-scope work, stop and ask first.
 
 ## Tech decisions
 
-- **Engine:** Unity 6 LTS, Universal 3D (URP) template. Unity Personal license.
+- **Engine:** Unity 6 (6000.6.6f1, the newest version available when the project was created; not an LTS release), Universal 3D (URP) template. Unity Personal license.
 - **Editor:** VS Code with the Microsoft Unity extension.
 - **Target platform:** Windows PC first.
 - **Input:** Unity **Input System** package only (no legacy `Input.GetAxis`).
@@ -106,7 +106,7 @@ If a task tempts you toward out-of-scope work, stop and ask first.
 Each step is meant to be one or a few small PRs. Check off as they land.
 
 0. [x] Repo setup: Unity `.gitignore`, `.gitattributes` for LFS, this `CLAUDE.md`
-1. [ ] Create the Unity project (Universal 3D) and install the Input System package
+1. [x] Create the Unity project (Universal 3D) and install the Input System package
 2. [x] Sandbox scene: flat floor, one hoop (rim, backboard, pole) at real dimensions, simple camera
 3. [ ] Input Actions asset with the starter layout (Move and Sprint wired up first)
 4. [ ] Player movement: capsule moves with the left stick, analog speed, acceleration/deceleration, sprint on R2
