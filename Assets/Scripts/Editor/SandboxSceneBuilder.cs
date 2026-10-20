@@ -15,6 +15,8 @@ public static class SandboxSceneBuilder
 {
     private const string ScenePath = "Assets/Scenes/Sandbox.unity";
     private const string MaterialFolder = "Assets/Materials/Sandbox";
+    private const string MovementConfigPath = "Assets/Settings/PlayerMovementConfig.asset";
+    private const string PlayerPhysicsPath = "Assets/Settings/PlayerPhysics.asset";
 
     // Real-world dimensions in meters (see CLAUDE.md).
     private const float CourtWidth = 15.24f;
@@ -38,6 +40,7 @@ public static class SandboxSceneBuilder
     private const float PlayerHeight = 1.98f;
     private const float PlayerRadius = 0.4f;
     private const float PlayerStartZ = 4f;             // a bit beyond the 3-point line, facing the hoop
+    private const float PlayerMass = 98f;              // about 215 lb
 
     [MenuItem("Basketball/Build Sandbox Scene")]
     public static void Build()
@@ -177,12 +180,59 @@ public static class SandboxSceneBuilder
         nose.transform.SetParent(player.transform, true);
         nose.GetComponent<Renderer>().sharedMaterial = GetMaterial("Lines", Color.white);
 
+        // Physics body. Rotation is frozen so collisions can't tip the capsule over;
+        // PlayerMovement turns it itself. Interpolation smooths motion between physics steps.
+        Rigidbody body = player.AddComponent<Rigidbody>();
+        body.mass = PlayerMass;
+        body.constraints = RigidbodyConstraints.FreezeRotation;
+        body.interpolation = RigidbodyInterpolation.Interpolate;
+
+        // No friction: PlayerMovement sets the speed directly, and floor friction would fight it.
+        player.GetComponent<Collider>().sharedMaterial = GetPlayerPhysicsMaterial();
+
+        player.AddComponent<PlayerInputReader>();
+        PlayerMovement movement = player.AddComponent<PlayerMovement>();
+        SerializedObject serialized = new SerializedObject(movement);
+        serialized.FindProperty("_config").objectReferenceValue = GetMovementConfig();
+        serialized.FindProperty("_input").objectReferenceValue = player.GetComponent<PlayerInputReader>();
+        serialized.ApplyModifiedPropertiesWithoutUndo();
+
         return player.transform;
+    }
+
+    // Created once and then reused, so tuning changes survive rebuilding the scene.
+    private static PlayerMovementConfig GetMovementConfig()
+    {
+        PlayerMovementConfig config = AssetDatabase.LoadAssetAtPath<PlayerMovementConfig>(MovementConfigPath);
+        if (config == null)
+        {
+            config = ScriptableObject.CreateInstance<PlayerMovementConfig>();
+            AssetDatabase.CreateAsset(config, MovementConfigPath);
+        }
+        return config;
+    }
+
+    private static PhysicsMaterial GetPlayerPhysicsMaterial()
+    {
+        PhysicsMaterial material = AssetDatabase.LoadAssetAtPath<PhysicsMaterial>(PlayerPhysicsPath);
+        if (material == null)
+        {
+            material = new PhysicsMaterial("PlayerPhysics")
+            {
+                dynamicFriction = 0f,
+                staticFriction = 0f,
+                frictionCombine = PhysicsMaterialCombine.Minimum,
+                bounciness = 0f,
+                bounceCombine = PhysicsMaterialCombine.Minimum,
+            };
+            AssetDatabase.CreateAsset(material, PlayerPhysicsPath);
+        }
+        return material;
     }
 
     private static void SetUpCamera(Transform player, Transform rim)
     {
-        Camera camera = Object.FindFirstObjectByType<Camera>();
+        Camera camera = Object.FindAnyObjectByType<Camera>();
         BehindPlayerCamera follow = camera.gameObject.AddComponent<BehindPlayerCamera>();
 
         // The camera's fields are private (tunable in the Inspector), so we fill them
@@ -191,6 +241,10 @@ public static class SandboxSceneBuilder
         serialized.FindProperty("_target").objectReferenceValue = player;
         serialized.FindProperty("_focus").objectReferenceValue = rim;
         serialized.ApplyModifiedPropertiesWithoutUndo();
+
+        SerializedObject movement = new SerializedObject(player.GetComponent<PlayerMovement>());
+        movement.FindProperty("_cameraTransform").objectReferenceValue = camera.transform;
+        movement.ApplyModifiedPropertiesWithoutUndo();
 
         // Rough starting spot behind the player so the Scene view thumbnail looks right.
         // The script snaps to its exact spot when Play starts.
