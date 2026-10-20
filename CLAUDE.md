@@ -108,8 +108,8 @@ Each step is meant to be one or a few small PRs. Check off as they land.
 0. [x] Repo setup: Unity `.gitignore`, `.gitattributes` for LFS, this `CLAUDE.md`
 1. [x] Create the Unity project (Universal 3D) and install the Input System package
 2. [x] Sandbox scene: flat floor, one hoop (rim, backboard, pole) at real dimensions, simple camera
-3. [ ] Input Actions asset with the starter layout (Move and Sprint wired up first)
-4. [ ] Player movement: capsule moves with the left stick, analog speed, acceleration/deceleration, sprint on R2
+3. [x] Input Actions asset with the starter layout (Move and Sprint wired up first)
+4. [x] Player movement: capsule moves with the left stick, analog speed, acceleration/deceleration, sprint on R2
 5. [ ] Ball physics: a ball that bounces and rolls realistically and collides correctly with rim and backboard
 6. [ ] Dribbling: ball attached to the player with a simple dribble loop, then right-stick dribble moves
 7. [ ] Shooting: hold-and-release Square, shot meter/timing, a computed arc toward the rim with a make/miss window
