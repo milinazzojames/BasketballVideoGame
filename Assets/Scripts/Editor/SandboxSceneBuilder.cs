@@ -16,7 +16,7 @@ public static class SandboxSceneBuilder
     private const string ScenePath = "Assets/Scenes/Sandbox.unity";
     private const string MaterialFolder = "Assets/Materials/Sandbox";
     private const string MovementConfigPath = "Assets/Settings/PlayerMovementConfig.asset";
-    private const string PlayerPhysicsPath = "Assets/Settings/PlayerPhysics.asset";
+    private const string PhysicsMaterialFolder = "Assets/Settings";
 
     // Real-world dimensions in meters (see CLAUDE.md).
     private const float CourtWidth = 15.24f;
@@ -42,6 +42,29 @@ public static class SandboxSceneBuilder
     private const float PlayerStartZ = 4f;             // a bit beyond the 3-point line, facing the hoop
     private const float PlayerMass = 98f;              // about 215 lb
 
+    // Size 7 basketball.
+    private const float BallDiameter = 0.24f;
+    private const float BallMass = 0.62f;
+    private const float BallAirDrag = 0.1f;            // Rigidbody linear damping; a light stand-in for air resistance
+    private const float BallRollingDrag = 0.3f;        // Rigidbody angular damping; makes a rolling ball slow down
+
+    // Bounciness and friction for each surface. Unity averages the ball's value
+    // with the surface's value, so the ball/floor bounce is (0.85 + 0.85) / 2 = 0.85,
+    // the ball/rim bounce is (0.85 + 0.45) / 2 = 0.65, and so on.
+    // A bounce of 0.85 returns a 1.83 m drop to about 0.85² × 1.83 = 1.32 m.
+    private const float BallBounce = 0.85f;
+    private const float FloorBounce = 0.85f;
+    private const float RimBounce = 0.45f;             // a rim gives a bit, so it's "deader" than the floor
+    private const float BackboardBounce = 0.65f;
+    private const float BallFriction = 0.6f;
+    private const float FloorFriction = 0.6f;
+    private const float RimFriction = 0.5f;
+    private const float BackboardFriction = 0.4f;
+
+    // Project-wide physics settings.
+    private const float FixedTimestep = 0.01f;         // 100 physics steps per second, so a fast ball can't skip past the thin rim
+    private const float BounceThreshold = 0.5f;        // impacts slower than this (m/s) don't bounce; Unity's default of 2 would kill soft dribbles
+
     [MenuItem("Basketball/Build Sandbox Scene")]
     public static void Build()
     {
@@ -58,10 +81,13 @@ public static class SandboxSceneBuilder
         // DefaultGameObjects gives us a Main Camera and a Directional Light.
         Scene scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
 
+        ApplyProjectPhysicsSettings();
         BuildFloor();
         Transform rim = BuildHoop();
         Transform player = BuildPlayerStandIn();
         SetUpCamera(player, rim);
+        Basketball ball = BuildBall();
+        BuildBallTester(ball, player, rim);
 
         EditorSceneManager.SaveScene(scene, ScenePath);
         AddSceneToBuildSettings();
@@ -76,10 +102,12 @@ public static class SandboxSceneBuilder
 
         // The floor is a thin box whose top surface sits exactly at y = 0.
         const float floorThickness = 0.1f;
-        CreateBox("Floor", court,
+        GameObject floor = CreateBox("Floor", court,
             new Vector3(0f, -floorThickness / 2f, HalfCourtLength / 2f),
             new Vector3(CourtWidth + Runoff * 2f, floorThickness, HalfCourtLength + Runoff * 2f),
             GetMaterial("Floor", new Color(0.76f, 0.6f, 0.42f)));
+        floor.GetComponent<Collider>().sharedMaterial =
+            GetPhysicsMaterial("FloorPhysics", FloorBounce, FloorFriction, PhysicsMaterialCombine.Average);
 
         // Painted lines are visual only (no colliders), raised 1 mm to avoid flickering against the floor.
         Material lineMat = GetMaterial("Lines", Color.white);
@@ -101,15 +129,18 @@ public static class SandboxSceneBuilder
 
         // Backboard: its front face is at boardFaceZ, its bottom edge 0.15 m below the rim.
         float boardCenterY = RimHeight - BoardBottomBelowRim + BoardHeight / 2f;
-        CreateBox("Backboard", hoop,
+        GameObject backboard = CreateBox("Backboard", hoop,
             new Vector3(0f, boardCenterY, boardFaceZ + BoardThickness / 2f),
             new Vector3(BoardWidth, BoardHeight, BoardThickness),
             GetMaterial("Backboard", new Color(0.95f, 0.95f, 0.95f)));
+        backboard.GetComponent<Collider>().sharedMaterial =
+            GetPhysicsMaterial("BackboardPhysics", BackboardBounce, BackboardFriction, PhysicsMaterialCombine.Average);
 
         // Rim: a ring of short capsule colliders. A ring can't be one primitive
         // collider, and a ring of capsules lets the ball hit the front, back,
         // and sides of the rim realistically.
         Material rimMat = GetMaterial("Rim", new Color(1f, 0.35f, 0f));
+        PhysicsMaterial rimPhysics = GetPhysicsMaterial("RimPhysics", RimBounce, RimFriction, PhysicsMaterialCombine.Average);
         float ringRadius = RimInnerRadius + RimTubeRadius;          // radius of the rod's centerline
         float rimCenterZ = boardFaceZ - RimToBoardGap - RimInnerRadius;
         Transform rim = new GameObject("Rim").transform;
@@ -135,6 +166,7 @@ public static class SandboxSceneBuilder
             segment.transform.localRotation = Quaternion.FromToRotation(Vector3.up, tangent);
             segment.transform.localScale = new Vector3(RimTubeRadius * 2f, segmentLength / 2f, RimTubeRadius * 2f);
             segment.GetComponent<Renderer>().sharedMaterial = rimMat;
+            segment.GetComponent<Collider>().sharedMaterial = rimPhysics;
         }
 
         // Bracket joining the back of the rim to the backboard.
@@ -188,7 +220,8 @@ public static class SandboxSceneBuilder
         body.interpolation = RigidbodyInterpolation.Interpolate;
 
         // No friction: PlayerMovement sets the speed directly, and floor friction would fight it.
-        player.GetComponent<Collider>().sharedMaterial = GetPlayerPhysicsMaterial();
+        player.GetComponent<Collider>().sharedMaterial =
+            GetPhysicsMaterial("PlayerPhysics", 0f, 0f, PhysicsMaterialCombine.Minimum);
 
         player.AddComponent<PlayerInputReader>();
         PlayerMovement movement = player.AddComponent<PlayerMovement>();
@@ -212,22 +245,80 @@ public static class SandboxSceneBuilder
         return config;
     }
 
-    private static PhysicsMaterial GetPlayerPhysicsMaterial()
+    // Physics materials are created once and then reused, so bounce and friction
+    // tuning done in the Inspector survives rebuilding the scene.
+    private static PhysicsMaterial GetPhysicsMaterial(string name, float bounciness, float friction, PhysicsMaterialCombine combine)
     {
-        PhysicsMaterial material = AssetDatabase.LoadAssetAtPath<PhysicsMaterial>(PlayerPhysicsPath);
+        string path = $"{PhysicsMaterialFolder}/{name}.asset";
+        PhysicsMaterial material = AssetDatabase.LoadAssetAtPath<PhysicsMaterial>(path);
         if (material == null)
         {
-            material = new PhysicsMaterial("PlayerPhysics")
+            material = new PhysicsMaterial(name)
             {
-                dynamicFriction = 0f,
-                staticFriction = 0f,
-                frictionCombine = PhysicsMaterialCombine.Minimum,
-                bounciness = 0f,
-                bounceCombine = PhysicsMaterialCombine.Minimum,
+                dynamicFriction = friction,
+                staticFriction = friction,
+                frictionCombine = combine,
+                bounciness = bounciness,
+                bounceCombine = combine,
             };
-            AssetDatabase.CreateAsset(material, PlayerPhysicsPath);
+            AssetDatabase.CreateAsset(material, path);
         }
         return material;
+    }
+
+    private static Basketball BuildBall()
+    {
+        GameObject ball = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        ball.name = "Basketball";
+        // Unity's sphere has radius 0.5, so a uniform scale of 0.24 gives a 0.24 m ball.
+        ball.transform.localScale = Vector3.one * BallDiameter;
+        // Start resting on the floor a meter in front of the player.
+        ball.transform.position = new Vector3(0f, BallDiameter / 2f, PlayerStartZ + 1f);
+        ball.GetComponent<Renderer>().sharedMaterial = GetMaterial("Ball", new Color(0.8f, 0.3f, 0.08f));
+        ball.GetComponent<Collider>().sharedMaterial =
+            GetPhysicsMaterial("BallPhysics", BallBounce, BallFriction, PhysicsMaterialCombine.Average);
+
+        Rigidbody body = ball.AddComponent<Rigidbody>();
+        body.mass = BallMass;
+        body.linearDamping = BallAirDrag;
+        body.angularDamping = BallRollingDrag;
+        body.interpolation = RigidbodyInterpolation.Interpolate;
+        // Continuous Dynamic checks the whole path between physics steps, so a
+        // fast ball can't pass through the thin rim between two steps.
+        body.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+
+        return ball.AddComponent<Basketball>();
+    }
+
+    private static void BuildBallTester(Basketball ball, Transform player, Transform rim)
+    {
+        BallTestLauncher tester = new GameObject("BallTester").AddComponent<BallTestLauncher>();
+        SerializedObject serialized = new SerializedObject(tester);
+        serialized.FindProperty("_ball").objectReferenceValue = ball;
+        serialized.FindProperty("_player").objectReferenceValue = player;
+        serialized.FindProperty("_rim").objectReferenceValue = rim;
+        serialized.ApplyModifiedPropertiesWithoutUndo();
+    }
+
+    // These live in Edit > Project Settings (Time and Physics). Setting them here,
+    // through Unity's own settings objects, keeps them in sync with this scene.
+    private static void ApplyProjectPhysicsSettings()
+    {
+        SetProjectSetting("ProjectSettings/TimeManager.asset", "Fixed Timestep", FixedTimestep);
+        SetProjectSetting("ProjectSettings/DynamicsManager.asset", "m_BounceThreshold", BounceThreshold);
+    }
+
+    private static void SetProjectSetting(string settingsPath, string propertyName, float value)
+    {
+        SerializedObject settings = new SerializedObject(AssetDatabase.LoadAllAssetsAtPath(settingsPath)[0]);
+        SerializedProperty property = settings.FindProperty(propertyName);
+        if (property == null)
+        {
+            Debug.LogWarning($"Couldn't find '{propertyName}' in {settingsPath}; set it by hand in Project Settings.");
+            return;
+        }
+        property.floatValue = value;
+        settings.ApplyModifiedProperties();
     }
 
     private static void SetUpCamera(Transform player, Transform rim)
