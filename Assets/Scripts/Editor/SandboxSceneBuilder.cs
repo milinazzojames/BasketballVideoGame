@@ -95,7 +95,8 @@ public static class SandboxSceneBuilder
         SetUpCamera(player, rim);
         Basketball ball = BuildBall();
         BuildBallTester(ball, player, rim);
-        AddShooter(player, ball, rim);
+        PlayerDribbler dribbler = AddDribbler(player, ball);
+        AddShooter(player, dribbler, ball, rim);
 
         EditorSceneManager.SaveScene(scene, ScenePath);
         AddSceneToBuildSettings();
@@ -314,8 +315,8 @@ public static class SandboxSceneBuilder
         ball.name = "Basketball";
         // Unity's sphere has radius 0.5, so a uniform scale of 0.24 gives a 0.24 m ball.
         ball.transform.localScale = Vector3.one * BallDiameter;
-        // Start resting on the floor a meter in front of the player.
-        ball.transform.position = new Vector3(0f, BallDiameter / 2f, PlayerStartZ + 1f);
+        // Start resting on the floor at the player's right hand, so the dribble starts right away.
+        ball.transform.position = new Vector3(0.6f, BallDiameter / 2f, PlayerStartZ + 0.25f);
         ball.GetComponent<Renderer>().sharedMaterial = GetMaterial("Ball", new Color(0.8f, 0.3f, 0.08f));
         ball.GetComponent<Collider>().sharedMaterial =
             GetPhysicsMaterial("BallPhysics", BallBounce, BallFriction, PhysicsMaterialCombine.Average);
@@ -342,11 +343,22 @@ public static class SandboxSceneBuilder
         serialized.ApplyModifiedPropertiesWithoutUndo();
     }
 
-    private static void AddShooter(Transform player, Basketball ball, Transform rim)
+    private static PlayerDribbler AddDribbler(Transform player, Basketball ball)
+    {
+        PlayerDribbler dribbler = player.gameObject.AddComponent<PlayerDribbler>();
+        SerializedObject serialized = new SerializedObject(dribbler);
+        serialized.FindProperty("_input").objectReferenceValue = player.GetComponent<PlayerInputReader>();
+        serialized.FindProperty("_ball").objectReferenceValue = ball;
+        serialized.ApplyModifiedPropertiesWithoutUndo();
+        return dribbler;
+    }
+
+    private static void AddShooter(Transform player, PlayerDribbler dribbler, Basketball ball, Transform rim)
     {
         PlayerShooter shooter = player.gameObject.AddComponent<PlayerShooter>();
         SerializedObject serialized = new SerializedObject(shooter);
         serialized.FindProperty("_input").objectReferenceValue = player.GetComponent<PlayerInputReader>();
+        serialized.FindProperty("_dribbler").objectReferenceValue = dribbler;
         serialized.FindProperty("_ball").objectReferenceValue = ball;
         serialized.FindProperty("_rim").objectReferenceValue = rim;
         serialized.FindProperty("_backboard").objectReferenceValue = rim.parent.Find("Backboard");

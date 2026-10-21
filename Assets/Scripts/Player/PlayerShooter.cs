@@ -11,11 +11,13 @@ using UnityEngine;
 // Every shot picks a random launch angle from a range that depends on distance:
 // close shots go up steeper (they start below the rim and need to drop in from
 // above), long shots flatter, like real shooters.
-// The ball is teleported to the player's hands for now because there's no dribbling yet.
+// You can only shoot while dribbling: pressing Shoot gathers the ball into the
+// hands (PlayerDribbler), and it's released from the release point when you let go.
 // Later idea (not built yet): a green shot nobody touches is guaranteed to go in.
 public class PlayerShooter : MonoBehaviour
 {
     [SerializeField] private PlayerInputReader _input;
+    [SerializeField] private PlayerDribbler _dribbler;
     [SerializeField] private Basketball _ball;
     [Tooltip("The rim to shoot at.")]
     [SerializeField] private Transform _rim;
@@ -23,7 +25,7 @@ public class PlayerShooter : MonoBehaviour
     [SerializeField] private Transform _backboard;
 
     [Header("Release")]
-    [Tooltip("Height of the ball's center at release, in meters. A 6'6\" player's set shot releases around 2.6-2.8 m.")]
+    [Tooltip("Height of the ball's center at release, in meters. A 6'6\" player's set shot releases around 2.6-2.8 m. One value for everyone for now; it'll become per-player later.")]
     [SerializeField] private float _releaseHeight = 2.7f;
     [Tooltip("How far in front of the player's center the ball is released, in meters.")]
     [SerializeField] private float _releaseForward = 0.3f;
@@ -79,6 +81,7 @@ public class PlayerShooter : MonoBehaviour
     private void Awake()
     {
         if (_input == null) _input = GetComponent<PlayerInputReader>();
+        if (_dribbler == null) _dribbler = GetComponent<PlayerDribbler>();
     }
 
     private void OnEnable()
@@ -101,6 +104,9 @@ public class PlayerShooter : MonoBehaviour
 
     private void StartCharging()
     {
+        // No ball, no shot.
+        if (_dribbler == null || !_dribbler.Gather()) return;
+
         IsCharging = true;
         _holdStartTime = Time.time;
     }
@@ -125,6 +131,9 @@ public class PlayerShooter : MonoBehaviour
 
     private void Shoot(bool green, float timingError)
     {
+        // Let go first, so the ball is a physics object again even if the shot
+        // can't be worked out below (it just drops out of the hands).
+        _dribbler.LetGo();
         if (_ball == null || _rim == null) return;
 
         // Release in front of the player, at release height.
