@@ -368,7 +368,12 @@ public static class SandboxSceneBuilder
     // through Unity's own settings objects, keeps them in sync with this scene.
     private static void ApplyProjectPhysicsSettings()
     {
-        SetProjectSetting("ProjectSettings/TimeManager.asset", "Fixed Timestep", FixedTimestep);
+        // Unity 6 stores Fixed Timestep as a fraction rather than a plain float, so
+        // setting it through SerializedObject silently fails. Outside Play mode,
+        // Time.fixedDeltaTime writes straight to the project setting instead;
+        // marking TimeManager dirty makes SaveAssets write it to disk.
+        Time.fixedDeltaTime = FixedTimestep;
+        EditorUtility.SetDirty(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TimeManager.asset")[0]);
         SetProjectSetting("ProjectSettings/DynamicsManager.asset", "m_BounceThreshold", BounceThreshold);
     }
 
