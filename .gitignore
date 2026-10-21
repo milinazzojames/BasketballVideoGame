@@ -74,3 +74,12 @@ crashlytics-build.properties
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Mixamo files must never be committed: the repo is public, and Mixamo's terms
+# forbid sharing raw character/animation files. Their .meta files ARE committed
+# (they only hold Unity's ID and our import settings), so re-downloaded files
+# reconnect to scenes and Animator Controllers. See Assets/ThirdParty/Mixamo/README.md.
+/[Aa]ssets/[Tt]hird[Pp]arty/[Mm]ixamo/**
+!/[Aa]ssets/[Tt]hird[Pp]arty/[Mm]ixamo/**/
+!/[Aa]ssets/[Tt]hird[Pp]arty/[Mm]ixamo/**/*.meta
+!/[Aa]ssets/[Tt]hird[Pp]arty/[Mm]ixamo/README.md
