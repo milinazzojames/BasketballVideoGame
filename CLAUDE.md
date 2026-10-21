@@ -40,7 +40,8 @@ If a task tempts you toward out-of-scope work, stop and ask first.
 - Branch names: `feature/<short-name>`, `fix/<short-name>`, `tune/<short-name>`, `docs/<short-name>`.
 - Commit messages: short imperative summary (e.g. `Add analog player movement`), body if needed.
 - Claude may create branches, commit, push, and open and merge PRs into `develop`. Never push to `main`.
-- Large binary assets go through **Git LFS** (see `.gitattributes`). Never commit paid Asset Store assets (this repo is public).
+- Large binary assets go through **Git LFS** (see `.gitattributes`). Never commit Unity Asset Store assets, paid or free (this repo is public).
+- **Never commit Mixamo files.** Their terms forbid sharing raw character/animation files, and a public repo counts as sharing. They live in `Assets/ThirdParty/Mixamo/`, which `.gitignore` excludes except for `.meta` files and the README (keep its download table up to date).
 - Never commit `Library/`, `Temp/`, `Obj/`, `Logs/`, `UserSettings/`, or build output.
 
 ## Tech decisions
@@ -110,14 +111,28 @@ Each step is meant to be one or a few small PRs. Check off as they land.
 2. [x] Sandbox scene: flat floor, one hoop (rim, backboard, pole) at real dimensions, simple camera
 3. [x] Input Actions asset with the starter layout (Move and Sprint wired up first)
 4. [x] Player movement: capsule moves with the left stick, analog speed, acceleration/deceleration, sprint on R2
-5. [ ] Ball physics: a ball that bounces and rolls realistically and collides correctly with rim and backboard
+5. [x] Ball physics: a ball that bounces and rolls realistically and collides correctly with rim and backboard
 6. [ ] Dribbling: ball attached to the player with a simple dribble loop, then right-stick dribble moves
-7. [ ] Shooting: hold-and-release Square, shot meter/timing, a computed arc toward the rim with a make/miss window
+7. [x] Shooting: hold-and-release Square, shot meter/timing, a computed arc toward the rim with a make/miss window
 8. [ ] Debug overlay: show speed, shot timing, release quality, and let values be tweaked live
 9. [ ] Passing to a static target
 10. [ ] Defense basics: stance/slide, hands up, steal attempt (against a dummy)
 
 After this, revisit the plan: 1v1, animation, visuals, and game logic.
+
+## Decisions for later (approved, not started)
+
+Animation and visuals are still out of scope until Jimmy says otherwise. When they come in, this is the plan:
+
+- **Shooting stays purely physics-based for now.** Later idea: a green shot nobody touches is guaranteed to go in (e.g. move the ball kinematically along the exact arc until it's below the rim, then hand it back to physics with the matching velocity).
+- **Budget:** keep the project free wherever possible. Paid assets are only a fallback.
+- **Look:** humans based on realism (realistic proportions and motion), not photoreal.
+- **Art pipeline:**
+  1. Make players in **MakeHuman** (free; core assets are CC0, so they can be committed): height/build/skin/face, basketball shorts and jersey. Export FBX. Check the license of any MakeHuman community assets (clothes, hair) before committing; only core assets are confirmed CC0.
+  2. Upload to **Mixamo** for auto-rigging and basketball animations (dribble, jump shot, layup, crossover). Mixamo files go in the git-ignored `Assets/ThirdParty/Mixamo/` folder.
+  3. Import into Unity with Rig = **Humanoid**, so any Mixamo clip works on any humanoid character.
+- **Shot timing with animation:** fire the ball's release from an **Animation Event** at the release frame, and line up the shot meter's green window with that frame (like 2K's jumper timing). The ball stays a physics object.
+- **Other free sources (prefer CC0, which can be committed):** Quaternius characters and animations, Poly Haven textures and HDRI skies (via LFS), Kenney props. Build the court from code (the scene builder already uses real dimensions).
 
 ## Open questions
 
