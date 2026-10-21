@@ -19,8 +19,8 @@ public class BallTestLauncher : MonoBehaviour
     [Header("Toss test (T)")]
     [Tooltip("Distance from the rim center to the release point, along the floor. A free throw is about 4.2 m.")]
     [SerializeField] private float _tossDistance = 4.2f;
-    [Tooltip("Release height of the ball's center, in meters.")]
-    [SerializeField] private float _releaseHeight = 2.4f;
+    [Tooltip("Release height of the ball's center, in meters. Matches PlayerShooter's release height.")]
+    [SerializeField] private float _releaseHeight = 2.7f;
     [Tooltip("Launch angle above horizontal, in degrees. Good shooters release around 45-55.")]
     [SerializeField, Range(20f, 75f)] private float _launchAngle = 52f;
     [Tooltip("Backspin in revolutions per second. Real jump shots have about 2-3.")]
