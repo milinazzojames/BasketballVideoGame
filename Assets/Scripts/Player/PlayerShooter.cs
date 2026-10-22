@@ -73,10 +73,10 @@ public class PlayerShooter : MonoBehaviour
     [Header("Shot meter timing")]
     [Tooltip("Seconds to fill the meter from empty to full while holding Shoot.")]
     [SerializeField] private float _meterFillTime = 1f;
-    [Tooltip("Where the green window starts on the meter (0 = bottom, 1 = top). Wide for now to make testing easy; narrow it later for challenge.")]
-    [SerializeField, Range(0f, 1f)] private float _greenStart = 0.6f;
-    [Tooltip("Where the green window ends on the meter. Above this is a late release.")]
-    [SerializeField, Range(0f, 1f)] private float _greenEnd = 0.95f;
+    [Tooltip("Middle of the green window on the meter (0 = bottom, 1 = top). The window grows and shrinks around this point, so it doesn't jump around.")]
+    [SerializeField, Range(0f, 1f)] private float _greenCenter = 0.8f;
+    [Tooltip("Width of the green window (in meter units) by the player's distance from the rim (meters, along the floor). Wide up close, narrow from deep. Set when the shot starts and kept until the release.")]
+    [SerializeField] private AnimationCurve _greenWidthByDistance = AnimationCurve.EaseInOut(1.8f, 0.35f, 10f, 0.08f);
 
     [Header("Misses (outside the green)")]
     [Tooltip("How far short or long the shot lands, in meters, per unit of meter missed. With 3, releasing 0.05 outside the green misses by 15 cm.")]
@@ -103,8 +103,8 @@ public class PlayerShooter : MonoBehaviour
     public float LastReleaseTime { get; private set; } = float.NegativeInfinity;
     public bool LastReleaseWasGreen { get; private set; }
     public float LastLaunchAngle { get; private set; }
-    public float GreenStart => _greenStart;
-    public float GreenEnd => _greenEnd;
+    public float GreenStart { get; private set; }
+    public float GreenEnd { get; private set; }
 
     private void Awake()
     {
@@ -137,6 +137,12 @@ public class PlayerShooter : MonoBehaviour
 
         IsCharging = true;
         _holdStartTime = Time.time;
+
+        // The green window is sized once, when the shot starts, so it can't
+        // change under the player while they're timing the release.
+        float width = _greenWidthByDistance.Evaluate(GetDistanceToRim());
+        GreenStart = Mathf.Clamp01(_greenCenter - width / 2f);
+        GreenEnd = Mathf.Clamp01(_greenCenter + width / 2f);
     }
 
     private void Release()
@@ -147,12 +153,12 @@ public class PlayerShooter : MonoBehaviour
         IsCharging = false;
         LastReleaseFill = fill;
         LastReleaseTime = Time.time;
-        LastReleaseWasGreen = fill >= _greenStart && fill <= _greenEnd;
+        LastReleaseWasGreen = fill >= GreenStart && fill <= GreenEnd;
 
         // How far outside the green the release was: negative = early, positive = late, 0 = green.
         float timingError = 0f;
-        if (fill < _greenStart) timingError = fill - _greenStart;
-        else if (fill > _greenEnd) timingError = fill - _greenEnd;
+        if (fill < GreenStart) timingError = fill - GreenStart;
+        else if (fill > GreenEnd) timingError = fill - GreenEnd;
 
         Shoot(LastReleaseWasGreen, timingError);
     }
@@ -194,7 +200,16 @@ public class PlayerShooter : MonoBehaviour
         _ball.Launch(velocity, ShotMath.GetBackspin(aimPoint - release, layup ? _layupBackspin : _backspin));
 
         string shotType = layup ? (bank ? "Layup off the glass" : "Layup") : (bank ? "Bank jump shot" : "Jump shot");
-        Debug.Log($"{shotType}: {distance:0.0} m from the rim, {launchAngle:0.0} deg, {(green ? "GREEN" : $"timing off by {timingError:+0.00;-0.00}")}");
+        Debug.Log($"{shotType}: {distance:0.0} m from the rim, {launchAngle:0.0} deg, green window {GreenEnd - GreenStart:0.00}, {(green ? "GREEN" : $"timing off by {timingError:+0.00;-0.00}")}");
+    }
+
+    // The player's center to the rim center, along the floor, in meters.
+    private float GetDistanceToRim()
+    {
+        if (_rim == null) return 0f;
+        Vector3 rimToPlayer = transform.position - _rim.position;
+        rimToPlayer.y = 0f;
+        return rimToPlayer.magnitude;
     }
 
     // A jump shot leaves the hands a little in front of the player, at release height.

@@ -115,6 +115,7 @@ Each step is meant to be one or a few small PRs. Check off as they land.
 6. [ ] Dribbling: ball attached to the player with a simple dribble loop, then right-stick dribble moves
 7. [x] Shooting: hold-and-release Square, shot meter/timing, a computed arc toward the rim with a make/miss window
    - [x] Layups inside 1.8 m: higher release, steeper arc, off the glass except straight on or along the baseline (dunks wait for animation)
+   - [x] Green window sized by distance (wide up close, narrow from deep); moving and contested shots come later
 8. [ ] Debug overlay: show speed, shot timing, release quality, and let values be tweaked live
 9. [ ] Passing to a static target
 10. [ ] Defense basics: stance/slide, hands up, steal attempt (against a dummy)
