@@ -67,6 +67,16 @@ public static class SandboxSceneBuilder
     private const float FloorFriction = 0.6f;
     private const float RimFriction = 0.5f;
     private const float BackboardFriction = 0.4f;
+    // The invisible walls use "Minimum" combine, so these are the values the ball
+    // actually gets against them (not averaged with the ball's 0.85 bounce).
+    private const float BarrierBounce = 0.3f;
+    private const float BarrierFriction = 0.3f;
+
+    // Invisible walls around the edge of the floor, so the ball and player can't fall off.
+    private const float BarrierHeight = 10f;           // at 6 m, a hard lob (peaking at 6.5 m) went over; 10 m costs nothing since they are invisible
+    private const float BarrierThickness = 0.5f;
+    // If the ball still ends up below this height (say it slips through), it's put back on the court.
+    private const float BallResetBelowY = -2f;
 
     // Project-wide physics settings.
     private const float FixedTimestep = 0.01f;         // 100 physics steps per second, so a fast ball can't skip past the thin rim
@@ -90,6 +100,7 @@ public static class SandboxSceneBuilder
 
         ApplyProjectPhysicsSettings();
         BuildFloor();
+        BuildBarriers();
         Transform rim = BuildHoop();
         Transform player = BuildPlayerStandIn();
         SetUpCamera(player, rim);
@@ -128,6 +139,41 @@ public static class SandboxSceneBuilder
         CreateLine("SidelineLeft", court, new Vector3(-CourtWidth / 2f, lineY, HalfCourtLength / 2f), new Vector3(LineWidth, 0.002f, HalfCourtLength), lineMat);
         CreateLine("SidelineRight", court, new Vector3(CourtWidth / 2f, lineY, HalfCourtLength / 2f), new Vector3(LineWidth, 0.002f, HalfCourtLength), lineMat);
         CreateLine("FreeThrowLine", court, new Vector3(0f, lineY, boardFaceZ - FreeThrowToBoard), new Vector3(3.66f, 0.002f, LineWidth), lineMat);
+    }
+
+    // Four invisible walls (colliders only, no mesh) standing on the outer edge of
+    // the floor, so the ball bounces softly back instead of falling off the world.
+    // Later, real out-of-bounds rules replace these during games.
+    private static void BuildBarriers()
+    {
+        Transform barriers = new GameObject("Barriers").transform;
+        PhysicsMaterial bounce = GetPhysicsMaterial("BarrierPhysics", BarrierBounce, BarrierFriction, PhysicsMaterialCombine.Minimum);
+
+        // Same footprint as the floor in BuildFloor. Each wall sits just outside
+        // the edge, and the side walls run past the corners so there are no gaps.
+        float halfWidth = CourtWidth / 2f + Runoff;
+        float nearZ = -Runoff;
+        float farZ = HalfCourtLength + Runoff;
+        float centerZ = (nearZ + farZ) / 2f;
+        float length = farZ - nearZ + BarrierThickness * 2f;
+        float width = halfWidth * 2f + BarrierThickness * 2f;
+        float y = BarrierHeight / 2f;
+        float offset = BarrierThickness / 2f;
+
+        CreateBarrier("BarrierLeft", barriers, new Vector3(-halfWidth - offset, y, centerZ), new Vector3(BarrierThickness, BarrierHeight, length), bounce);
+        CreateBarrier("BarrierRight", barriers, new Vector3(halfWidth + offset, y, centerZ), new Vector3(BarrierThickness, BarrierHeight, length), bounce);
+        CreateBarrier("BarrierHalfCourt", barriers, new Vector3(0f, y, nearZ - offset), new Vector3(width, BarrierHeight, BarrierThickness), bounce);
+        CreateBarrier("BarrierBaseline", barriers, new Vector3(0f, y, farZ + offset), new Vector3(width, BarrierHeight, BarrierThickness), bounce);
+    }
+
+    private static void CreateBarrier(string name, Transform parent, Vector3 position, Vector3 size, PhysicsMaterial material)
+    {
+        GameObject wall = new GameObject(name);
+        wall.transform.SetParent(parent, false);
+        wall.transform.localPosition = position;
+        BoxCollider collider = wall.AddComponent<BoxCollider>();
+        collider.size = size;
+        collider.sharedMaterial = material;
     }
 
     // Returns the rim, which the camera uses as its focus point.
@@ -330,7 +376,14 @@ public static class SandboxSceneBuilder
         // fast ball can't pass through the thin rim between two steps.
         body.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
 
-        return ball.AddComponent<Basketball>();
+        Basketball basketball = ball.AddComponent<Basketball>();
+        // A ball that falls off the world is dropped back in at the free-throw line.
+        float freeThrowZ = HalfCourtLength - BaselineToBoard - FreeThrowToBoard;
+        SerializedObject serialized = new SerializedObject(basketball);
+        serialized.FindProperty("_resetBelowHeight").floatValue = BallResetBelowY;
+        serialized.FindProperty("_resetPosition").vector3Value = new Vector3(0f, 1f, freeThrowZ);
+        serialized.ApplyModifiedPropertiesWithoutUndo();
+        return basketball;
     }
 
     private static void BuildBallTester(Basketball ball, Transform player, Transform rim)
