@@ -112,6 +112,7 @@ Each step is meant to be one or a few small PRs. Check off as they land.
 3. [x] Input Actions asset with the starter layout (Move and Sprint wired up first)
 4. [x] Player movement: capsule moves with the left stick, analog speed, acceleration/deceleration, sprint on R2
 5. [x] Ball physics: a ball that bounces and rolls realistically and collides correctly with rim and backboard
+   - [x] Invisible walls around the floor and a safety reset, so the ball never falls off the world (real out-of-bounds rules replace them during games later)
 6. [ ] Dribbling: ball attached to the player with a simple dribble loop, then right-stick dribble moves
 7. [x] Shooting: hold-and-release Square, shot meter/timing, a computed arc toward the rim with a make/miss window
    - [x] Layups inside 1.8 m: higher release, steeper arc, off the glass except straight on or along the baseline (dunks wait for animation)

@@ -14,6 +14,12 @@ public class Basketball : MonoBehaviour
     [Tooltip("Extra solver passes for this ball. More passes = more accurate bounce heights, at a tiny performance cost.")]
     [SerializeField] private int _solverVelocityIterations = 8;
 
+    [Header("Safety reset")]
+    [Tooltip("If the ball's center ever drops below this height (meters), it fell off the world, so it's put back on the court.")]
+    [SerializeField] private float _resetBelowHeight = -2f;
+    [Tooltip("Where a ball that fell off the world is put back (the scene builder sets this to the free-throw line).")]
+    [SerializeField] private Vector3 _resetPosition = new Vector3(0f, 1f, 8.5f);
+
     private Rigidbody _rigidbody;
     private SphereCollider _collider;
     private CollisionDetectionMode _collisionMode;
@@ -30,6 +36,16 @@ public class Basketball : MonoBehaviour
         _rigidbody.maxAngularVelocity = _maxSpinSpeed;
         _rigidbody.solverVelocityIterations = _solverVelocityIterations;
         _collisionMode = _rigidbody.collisionDetectionMode;
+    }
+
+    private void FixedUpdate()
+    {
+        // The walls around the court should stop this, but just in case.
+        if (!IsHeld && _rigidbody.position.y < _resetBelowHeight)
+        {
+            Debug.Log("Ball fell off the court; putting it back.");
+            Place(_resetPosition);
+        }
     }
 
     // Stops physics from moving the ball, so it can be carried with MoveHeld.
