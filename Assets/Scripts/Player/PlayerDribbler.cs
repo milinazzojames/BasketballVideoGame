@@ -9,9 +9,14 @@ using UnityEngine;
 //   - standing still (left stick centered) is a low, hard pound dribble
 //   - protecting (L2) is a low, tight dribble, with the ball kept on the side
 //     away from the hoop (later: away from the defender)
-//   - a right-stick flick toward the other hand is a crossover: the hand pushes
-//     the ball down and across, it bounces once in front of the body, and comes
-//     up into the other hand
+//   - right-stick dribble moves. Each one is still physics: the hand pushes the
+//     ball down, guides it to one bounce, and it comes up into the hand it ends in.
+//     Directions are relative to the hand that has the ball:
+//       flick toward the other hand              = crossover (bounce in front)
+//       flick back, diagonally toward other hand = between the legs (bounce under the body)
+//       flick straight back                      = behind the back (bounce behind the body)
+//       flick forward or toward the ball's side  = hesitation (same hand, quick slowdown)
+//       roll the stick through a half circle     = spin move (body spins, ends in the other hand)
 //   - if the ball gets knocked too far away (say it hits the pole), the dribble is lost
 // Moves take a moment. Flicking again before the ball reaches the new hand, or a
 // move that can't get the ball to the new hand (say, while turning hard at full
@@ -23,9 +28,11 @@ using UnityEngine;
 public class PlayerDribbler : MonoBehaviour
 {
     private enum State { Loose, Dribbling, Fumbling, Holding }
-    private enum Move { None, Crossover }
+    private enum Move { None, Crossover, BetweenTheLegs, BehindTheBack, Hesitation, Spin }
 
     [SerializeField] private PlayerInputReader _input;
+    [Tooltip("Hesitations and spin moves slow down and turn the player through this.")]
+    [SerializeField] private PlayerMovement _movement;
     [SerializeField] private Basketball _ball;
     [Tooltip("Right-stick flicks are read relative to this camera, like the left stick. Uses the main camera if empty.")]
     [SerializeField] private Transform _cameraTransform;
@@ -91,6 +98,26 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _moveCatchHeight = 0.8f;
     [Tooltip("Crossover: how far in front of the hands the ball bounces, in meters (halfway between them, side to side).")]
     [SerializeField] private float _crossoverBounceAhead = 0.2f;
+    [Tooltip("Between the legs: how far in front of the player's center the ball bounces, in meters (0 = right under the body).")]
+    [SerializeField] private float _betweenTheLegsBounceForward = 0f;
+    [Tooltip("Behind the back: how far behind the player's center the ball bounces, in meters.")]
+    [SerializeField] private float _behindTheBackBounceDistance = 0.45f;
+    [Tooltip("Hesitation: the player's top speed is multiplied by this for a moment (0-1).")]
+    [SerializeField, Range(0f, 1f)] private float _hesitationSpeed = 0.3f;
+    [Tooltip("Hesitation: how long the slowdown lasts, in seconds. Afterwards the player speeds back up at their normal acceleration.")]
+    [SerializeField] private float _hesitationTime = 0.35f;
+    [Tooltip("Spin move: seconds for the body's full turn.")]
+    [SerializeField] private float _spinTime = 0.45f;
+    [Tooltip("Spin move: how far in front of the player (as they were facing when the spin started) the ball bounces, in meters.")]
+    [SerializeField] private float _spinBounceForward = 0.3f;
+    [Tooltip("Spin move: how far the right stick has to be rolled around, in degrees, while pushed out.")]
+    [SerializeField] private float _spinStickAngle = 180f;
+    [Tooltip("Spin move: the stick has to roll that far within this many seconds of being pushed out.")]
+    [SerializeField] private float _spinStickTime = 0.4f;
+    [Tooltip("A flick held out counts after this many seconds (or when the stick is let go). If the stick turns more than the flick turn limit first, it's a stick roll (spin), not a flick.")]
+    [SerializeField] private float _flickSettleTime = 0.12f;
+    [Tooltip("A flick turns into a stick roll once the stick has turned this many degrees while pushed out.")]
+    [SerializeField] private float _flickMaxTurn = 60f;
     [Tooltip("Largest speed the hand can give the ball during a move, in m/s on top of the player's own speed. A move that needs more can't get the ball to the other hand in time.")]
     [SerializeField] private float _maxMoveSpeed = 6f;
     [Tooltip("At the end of a move, the ball has to come up within this distance of the new hand (meters, along the floor), or the handle is fumbled.")]
@@ -126,8 +153,15 @@ public class PlayerDribbler : MonoBehaviour
     private float _moveStartTime;
     private Move _pendingMove = Move.None;
     private float _pendingTime;
+    private Quaternion _moveStartRotation;
     private bool _stickCentered;
     private float _stickCenteredTime;
+    private bool _stickOut;
+    private Vector2 _lastStick;
+    private float _stickTurned;
+    private float _stickOutTime;
+    private bool _flickWaiting;
+    private Vector2 _flickDirection;
     private float _fumbleStartTime;
 
     public bool HasBall => _state != State.Loose;
@@ -138,6 +172,7 @@ public class PlayerDribbler : MonoBehaviour
         _body = GetComponent<Rigidbody>();
         _collider = GetComponent<Collider>();
         if (_input == null) _input = GetComponent<PlayerInputReader>();
+        if (_movement == null) _movement = GetComponent<PlayerMovement>();
         if (_cameraTransform == null && Camera.main != null) _cameraTransform = Camera.main.transform;
         _hand = _startInRightHand ? 1 : -1;
     }
@@ -152,8 +187,8 @@ public class PlayerDribbler : MonoBehaviour
                 if (CanPickUp()) PickUp();
                 break;
             case State.Dribbling:
-                ReadFlick();
-                // A flick can fumble the ball; then it's no longer dribbled this step.
+                ReadDribbleStick();
+                // A move can fumble the ball; then it's no longer dribbled this step.
                 if (_state == State.Dribbling) Dribble();
                 break;
             case State.Fumbling:
@@ -216,8 +251,9 @@ public class PlayerDribbler : MonoBehaviour
             // The end of a move: the ball has to come up to the new hand.
             if (_move != Move.None && _moveBounced)
             {
+                Vector3 catchPoint = MoveCatchPoint();
                 _move = Move.None;
-                if (FlatDistance(ballPosition, HandPoint()) > _catchRadius)
+                if (FlatDistance(ballPosition, catchPoint) > _catchRadius)
                 {
                     Fumble("Fumbled the move: the ball didn't come up to the hand.");
                     return;
@@ -270,7 +306,7 @@ public class PlayerDribbler : MonoBehaviour
     // gets there as it comes up to hand height).
     private Vector3 SteerMove(Vector3 ballPosition, float vertical, float handHeight)
     {
-        Vector3 target = _moveBounced ? HandPoint() : MoveBouncePoint();
+        Vector3 target = _moveBounced ? MoveCatchPoint() : MoveBouncePoint();
         float time = _moveBounced
             ? TimeToRiseTo(handHeight - ballPosition.y, vertical)
             : TimeToFall(ballPosition.y - _ball.Radius, -vertical);
@@ -283,38 +319,95 @@ public class PlayerDribbler : MonoBehaviour
     // Where the ball bounces during the current move, in world space.
     private Vector3 MoveBouncePoint()
     {
-        // Crossover: halfway between the hands, a little in front of them.
-        float handForward = Mathf.Lerp(_forwardOffset, _protectForwardOffset, _input.Protect);
-        return _body.position + _body.rotation * new Vector3(0f, 0f, handForward + _crossoverBounceAhead);
+        switch (_move)
+        {
+            case Move.BetweenTheLegs:
+                return _body.position + _body.rotation * new Vector3(0f, 0f, _betweenTheLegsBounceForward);
+            case Move.BehindTheBack:
+                return _body.position + _body.rotation * new Vector3(0f, 0f, -_behindTheBackBounceDistance);
+            case Move.Hesitation:
+                // Same hand: just a slower, higher bounce while the feet stop.
+                return HandPoint();
+            case Move.Spin:
+                // The ball is planted in front while the body spins around it. Uses
+                // the facing from the start of the spin, since the body is turning.
+                return _body.position + _moveStartRotation * new Vector3(0f, 0f, _spinBounceForward);
+            default:
+                // Crossover: halfway between the hands, a little in front of them.
+                float handForward = Mathf.Lerp(_forwardOffset, _protectForwardOffset, _input.Protect);
+                return _body.position + _body.rotation * new Vector3(0f, 0f, handForward + _crossoverBounceAhead);
+        }
     }
 
-    // Reads the right stick. A flick is a quick push from centered to far out.
-    private void ReadFlick()
+    // Reads the right stick. A flick is a quick push from centered to far out;
+    // a roll is the stick going around while pushed out. A roll starts with a
+    // push out too, so a flick only counts once the stick is let go or has held
+    // still for a moment without turning.
+    private void ReadDribbleStick()
     {
         Vector2 stick = _input.DribbleStick;
         if (stick.magnitude < _flickDeadZone)
         {
+            if (_flickWaiting) ConfirmFlick();
             _stickCentered = true;
+            _stickOut = false;
             _stickCenteredTime = Time.time;
             return;
         }
-        if (!_stickCentered || stick.magnitude < _flickThreshold) return;
 
-        // The stick has to come back to center before the next flick.
-        _stickCentered = false;
-        if (Time.time - _stickCenteredTime > _flickTime) return;
+        if (_stickCentered && stick.magnitude >= _flickThreshold)
+        {
+            // Pushed out. The stick has to come back to center before the next flick.
+            _stickCentered = false;
+            _stickOut = true;
+            _lastStick = stick;
+            _stickTurned = 0f;
+            _stickOutTime = Time.time;
+            _flickDirection = stick;
+            _flickWaiting = Time.time - _stickCenteredTime <= _flickTime;
+            return;
+        }
+        if (!_stickOut) return;
 
+        // Rolling the stick around: half a circle (either way) is a spin move.
+        _stickTurned += Vector2.SignedAngle(_lastStick, stick);
+        _lastStick = stick;
+        if (Mathf.Abs(_stickTurned) > _flickMaxTurn) _flickWaiting = false;
+        if (Mathf.Abs(_stickTurned) >= _spinStickAngle && Time.time - _stickOutTime <= _spinStickTime)
+        {
+            _stickOut = false;
+            OnMoveInput(Move.Spin);
+            return;
+        }
+
+        if (_flickWaiting && Time.time - _stickOutTime >= _flickSettleTime) ConfirmFlick();
+    }
+
+    private void ConfirmFlick()
+    {
+        _flickWaiting = false;
+        OnMoveInput(GetFlickMove(_flickDirection));
+    }
+
+    // Which move a flick is, from its direction relative to the hand with the ball.
+    private Move GetFlickMove(Vector2 stick)
+    {
+        Vector2 local = StickToPlayerFrame(stick);   // x = player's right, y = player's forward
+        float towardBallSide = local.x * _hand;       // + = toward the hand with the ball
+        if (local.y < -0.5f) return towardBallSide < -0.3f ? Move.BetweenTheLegs : Move.BehindTheBack;
+        if (towardBallSide < -0.5f) return Move.Crossover;
+        return Move.Hesitation;
+    }
+
+    private void OnMoveInput(Move move)
+    {
         // Too quick: a new move while the last one is still on its way.
         if (_move != Move.None)
         {
             Fumble("Fumbled: moves too quick.");
             return;
         }
-
-        // The flick direction in the player's own frame: x = right, y = forward.
-        Vector2 local = StickToPlayerFrame(stick);
-        // Toward the hand that doesn't have the ball: a crossover.
-        if (-local.x * _hand > 0.5f) RequestMove(Move.Crossover);
+        RequestMove(move);
     }
 
     private void RequestMove(Move move)
@@ -331,7 +424,20 @@ public class PlayerDribbler : MonoBehaviour
         _pendingMove = Move.None;
         _moveBounced = false;
         _moveStartTime = Time.time;
-        _hand = -_hand;   // a crossover ends in the other hand
+        _moveStartRotation = _body.rotation;
+        Debug.Log($"Dribble move: {_move}");
+
+        if (_move == Move.Hesitation)
+        {
+            if (_movement != null) _movement.SlowDown(_hesitationSpeed, _hesitationTime);
+        }
+        else
+        {
+            // A spin turns away from the ball's side (right hand = spin to the left).
+            if (_move == Move.Spin && _movement != null) _movement.Spin(-360f * _hand, _spinTime);
+            // Every other move ends in the other hand.
+            _hand = -_hand;
+        }
         return -_movePushSpeed;
     }
 
@@ -437,10 +543,25 @@ public class PlayerDribbler : MonoBehaviour
     // really is this physics step.
     private Vector3 HandPoint()
     {
+        return HandPoint(_body.rotation);
+    }
+
+    // Where the hand would be with the body turned this way.
+    private Vector3 HandPoint(Quaternion bodyRotation)
+    {
         float protect = _input.Protect;
         float side = Mathf.Lerp(_sideOffset, _protectSideOffset, protect);
         float forward = Mathf.Lerp(_forwardOffset, _protectForwardOffset, protect);
-        return _body.position + _body.rotation * new Vector3(side * _hand, 0f, forward);
+        return _body.position + bodyRotation * new Vector3(side * _hand, 0f, forward);
+    }
+
+    // Where the hand takes the ball at the end of a move. During a spin the hand
+    // whips around much faster than the ball can follow, so the ball goes straight
+    // to where the hand will be when the full turn is done (facing the same way
+    // as at the start) while the body spins around it.
+    private Vector3 MoveCatchPoint()
+    {
+        return _move == Move.Spin ? HandPoint(_moveStartRotation) : HandPoint();
     }
 
     private Vector3 HoldPoint()

@@ -13,9 +13,30 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private Transform _cameraTransform;
 
     private Rigidbody _rigidbody;
+    private float _slowDownMultiplier = 1f;
+    private float _slowDownUntil = float.NegativeInfinity;
+    private float _spinDegreesLeft;
+    private float _spinSpeed;
 
     // Current speed along the floor in m/s (for the debug overlay later).
     public float CurrentSpeed { get; private set; }
+
+    // Caps the top speed at this fraction (0-1) for a moment, like a hesitation
+    // dribble. Speeding back up afterwards uses the normal acceleration.
+    public void SlowDown(float speedMultiplier, float seconds)
+    {
+        _slowDownMultiplier = speedMultiplier;
+        _slowDownUntil = Time.time + seconds;
+    }
+
+    // Turns the body a set amount (degrees, + = clockwise seen from above, to
+    // the right) over this many seconds, like a spin move. While spinning, the
+    // body doesn't turn toward the stick; it still moves where the stick points.
+    public void Spin(float degrees, float seconds)
+    {
+        _spinDegreesLeft = degrees;
+        _spinSpeed = Mathf.Abs(degrees) / Mathf.Max(seconds, 0.01f);
+    }
 
     private void Awake()
     {
@@ -37,6 +58,7 @@ public class PlayerMovement : MonoBehaviour
 
         // R2 pressure blends between run and sprint speed.
         float maxSpeed = Mathf.Lerp(_config.RunSpeed, _config.SprintSpeed, _input.Sprint);
+        if (Time.time < _slowDownUntil) maxSpeed *= _slowDownMultiplier;
         Vector3 targetVelocity = moveDirection * (stickAmount * maxSpeed);
 
         // Only change the floor (X/Z) part of the velocity; gravity keeps the Y part.
@@ -53,9 +75,16 @@ public class PlayerMovement : MonoBehaviour
         _rigidbody.linearVelocity = new Vector3(floorVelocity.x, velocity.y, floorVelocity.z);
         CurrentSpeed = floorVelocity.magnitude;
 
-        // Turn to face where the stick points (not where we're sliding),
+        // A spin turns the body at its own speed until it's done.
+        if (_spinDegreesLeft != 0f)
+        {
+            float step = Mathf.Sign(_spinDegreesLeft) * Mathf.Min(_spinSpeed * Time.fixedDeltaTime, Mathf.Abs(_spinDegreesLeft));
+            _spinDegreesLeft -= step;
+            _rigidbody.MoveRotation(_rigidbody.rotation * Quaternion.Euler(0f, step, 0f));
+        }
+        // Otherwise turn to face where the stick points (not where we're sliding),
         // so the player feels responsive.
-        if (moveDirection.sqrMagnitude > 0.01f)
+        else if (moveDirection.sqrMagnitude > 0.01f)
         {
             Quaternion targetRotation = Quaternion.LookRotation(moveDirection);
             _rigidbody.MoveRotation(Quaternion.RotateTowards(
