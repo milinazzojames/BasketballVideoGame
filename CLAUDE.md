@@ -114,6 +114,8 @@ Each step is meant to be one or a few small PRs. Check off as they land.
 5. [x] Ball physics: a ball that bounces and rolls realistically and collides correctly with rim and backboard
    - [x] Invisible walls around the floor and a safety reset, so the ball never falls off the world (real out-of-bounds rules replace them during games later)
 6. [ ] Dribbling: ball attached to the player with a simple dribble loop, then right-stick dribble moves
+   - [x] Dribble loop, dribble hand (left/right), crossover (right-stick flick), pound dribble standing still, protect on L2, fumbles
+   - [ ] Between the legs, behind the back, hesitation, spin move
 7. [x] Shooting: hold-and-release Square, shot meter/timing, a computed arc toward the rim with a make/miss window
    - [x] Layups inside 1.8 m: higher release, steeper arc, off the glass except straight on or along the baseline (dunks wait for animation)
    - [x] Green window sized by distance (wide up close, narrow from deep); moving and contested shots come later

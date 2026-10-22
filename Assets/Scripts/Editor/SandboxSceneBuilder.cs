@@ -106,7 +106,7 @@ public static class SandboxSceneBuilder
         SetUpCamera(player, rim);
         Basketball ball = BuildBall();
         BuildBallTester(ball, player, rim);
-        PlayerDribbler dribbler = AddDribbler(player, ball);
+        PlayerDribbler dribbler = AddDribbler(player, ball, rim);
         AddShooter(player, dribbler, ball, rim);
 
         EditorSceneManager.SaveScene(scene, ScenePath);
@@ -396,12 +396,15 @@ public static class SandboxSceneBuilder
         serialized.ApplyModifiedPropertiesWithoutUndo();
     }
 
-    private static PlayerDribbler AddDribbler(Transform player, Basketball ball)
+    private static PlayerDribbler AddDribbler(Transform player, Basketball ball, Transform rim)
     {
         PlayerDribbler dribbler = player.gameObject.AddComponent<PlayerDribbler>();
         SerializedObject serialized = new SerializedObject(dribbler);
         serialized.FindProperty("_input").objectReferenceValue = player.GetComponent<PlayerInputReader>();
         serialized.FindProperty("_ball").objectReferenceValue = ball;
+        serialized.FindProperty("_cameraTransform").objectReferenceValue = Object.FindAnyObjectByType<Camera>().transform;
+        // Protecting keeps the ball away from the hoop until there's a defender to keep it away from.
+        serialized.FindProperty("_protectFrom").objectReferenceValue = rim;
         serialized.ApplyModifiedPropertiesWithoutUndo();
         return dribbler;
     }

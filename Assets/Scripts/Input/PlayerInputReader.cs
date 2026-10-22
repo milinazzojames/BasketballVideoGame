@@ -13,12 +13,20 @@ public class PlayerInputReader : MonoBehaviour
     private InputAction _moveAction;
     private InputAction _sprintAction;
     private InputAction _shootAction;
+    private InputAction _dribbleStickAction;
+    private InputAction _protectAction;
 
     // Left stick (or WASD), length 0..1. A light push gives a short vector.
     public Vector2 Move { get; private set; }
 
     // How hard R2 (or Left Shift) is pressed, 0..1.
     public float Sprint { get; private set; }
+
+    // Right stick (or arrow keys), length 0..1. Flicks of it are dribble moves.
+    public Vector2 DribbleStick { get; private set; }
+
+    // How hard L2 (or Left Ctrl) is pressed, 0..1. Protects the ball.
+    public float Protect { get; private set; }
 
     // Fired once when Shoot (Square / Space) is pressed, and once when it's let go.
     public event System.Action ShootPressed;
@@ -32,6 +40,8 @@ public class PlayerInputReader : MonoBehaviour
         _moveAction = map.FindAction("Move", throwIfNotFound: true);
         _sprintAction = map.FindAction("Sprint", throwIfNotFound: true);
         _shootAction = map.FindAction("Shoot", throwIfNotFound: true);
+        _dribbleStickAction = map.FindAction("DribbleStick", throwIfNotFound: true);
+        _protectAction = map.FindAction("Protect", throwIfNotFound: true);
         // For a button: "performed" fires when it's pressed, "canceled" when it's released.
         _shootAction.performed += OnShootPerformed;
         _shootAction.canceled += OnShootCanceled;
@@ -61,5 +71,7 @@ public class PlayerInputReader : MonoBehaviour
         // Diagonal keyboard input (W + D) would otherwise be longer than 1.
         Move = Vector2.ClampMagnitude(_moveAction.ReadValue<Vector2>(), 1f);
         Sprint = _sprintAction.ReadValue<float>();
+        DribbleStick = Vector2.ClampMagnitude(_dribbleStickAction.ReadValue<Vector2>(), 1f);
+        Protect = _protectAction.ReadValue<float>();
     }
 }
