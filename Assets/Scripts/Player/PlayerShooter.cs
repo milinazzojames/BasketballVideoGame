@@ -15,7 +15,10 @@ using UnityEngine;
 // extended) and closer to the rim, at a steep angle, and usually off the glass.
 // You can only shoot while dribbling: pressing Shoot gathers the ball into the
 // hands (PlayerDribbler), and it's released from the release point when you let go.
+// With a body (PlayerBody), the meter also lifts the ball from the chest to the
+// set point above the forehead, and the ball leaves from the shooting hand.
 // Later idea (not built yet): a green shot nobody touches is guaranteed to go in.
+[DefaultExecutionOrder(-10)]   // carries the held ball before the dribbler moves it this step
 public class PlayerShooter : MonoBehaviour
 {
     [SerializeField] private PlayerInputReader _input;
@@ -25,6 +28,20 @@ public class PlayerShooter : MonoBehaviour
     [SerializeField] private Transform _rim;
     [Tooltip("The backboard, used for bank shots.")]
     [SerializeField] private Transform _backboard;
+    [Tooltip("The player's body. With one, the shot is lifted into the set point and leaves from the shooting hand. Optional.")]
+    [SerializeField] private PlayerBody _body;
+
+    [Header("Shot motion (with a body)")]
+    [Tooltip("Shoot with the right hand (off = left hand).")]
+    [SerializeField] private bool _shootRightHanded = true;
+    [Tooltip("Set point: how far the ball's center is above the center of the head, in meters (above the forehead).")]
+    [SerializeField] private float _setPointAboveHead = 0.2f;
+    [Tooltip("Set point: how far in front of the head, toward the rim, in meters.")]
+    [SerializeField] private float _setPointForward = 0.2f;
+    [Tooltip("Set point: how far toward the shooting hand's side, in meters.")]
+    [SerializeField] private float _setPointSide = 0.1f;
+    [Tooltip("Meter fill (0-1) at which the ball reaches the set point. Before that, it rises from the chest.")]
+    [SerializeField, Range(0.05f, 1f)] private float _liftEndFill = 0.6f;
 
     [Header("Release")]
     [Tooltip("Height of the ball's center at release, in meters. A 6'6\" player's set shot releases around 2.6-2.8 m. One value for everyone for now; it'll become per-player later.")]
@@ -106,6 +123,11 @@ public class PlayerShooter : MonoBehaviour
     public float GreenStart { get; private set; }
     public float GreenEnd { get; private set; }
 
+    // Read by PlayerArms. +1 = right hand, -1 = left hand.
+    public int ShootingSide => _shootRightHanded ? 1 : -1;
+    // Flat direction from the player toward the rim.
+    public Vector3 ShotDirection => _rim != null ? Flatten(_rim.position - transform.position) : transform.forward;
+
     private void Awake()
     {
         if (_input == null) _input = GetComponent<PlayerInputReader>();
@@ -128,6 +150,31 @@ public class PlayerShooter : MonoBehaviour
     {
         // Holding all the way to the top lets the shot go by itself.
         if (IsCharging && MeterFill >= 1f) Release();
+    }
+
+    // While charging, the ball rises with the meter from the chest to the set point.
+    private void FixedUpdate()
+    {
+        if (!IsCharging || _body == null) return;
+
+        float lift = Mathf.SmoothStep(0f, 1f, MeterFill / _liftEndFill);
+        _dribbler.CarryHeldBall(Vector3.Lerp(_dribbler.GetHoldPoint(), GetSetPoint(), lift));
+    }
+
+    // Above the forehead, a little in front and toward the shooting hand.
+    private Vector3 GetSetPoint()
+    {
+        Vector3 toRim = ShotDirection;
+        Vector3 toShootingSide = Vector3.Cross(Vector3.up, toRim) * ShootingSide;
+        return _body.GetHeadCenter() + Vector3.up * _setPointAboveHead + toRim * _setPointForward + toShootingSide * _setPointSide;
+    }
+
+    // With a body, the ball leaves from the shooting hand: it sits on the palm,
+    // so its center is one ball radius out from it.
+    private Vector3 GetHandRelease()
+    {
+        _body.GetPalm(ShootingSide, out Vector3 palm, out Vector3 palmFacing);
+        return palm + palmFacing * _ball.Radius;
     }
 
     private void StartCharging()
@@ -176,7 +223,8 @@ public class PlayerShooter : MonoBehaviour
         float distance = rimToPlayer.magnitude;
         bool layup = distance <= _layupRange;
 
-        Vector3 release = layup ? GetLayupRelease(rimToPlayer) : GetJumpShotRelease(rimToPlayer);
+        Vector3 release = _body != null ? GetHandRelease()
+            : layup ? GetLayupRelease(rimToPlayer) : GetJumpShotRelease(rimToPlayer);
         Vector3 shotDirection = Flatten(_rim.position - release);
 
         // Green layups can bank too; green jump shots always go straight at the rim.
