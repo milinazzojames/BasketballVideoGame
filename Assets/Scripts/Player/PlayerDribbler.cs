@@ -203,10 +203,12 @@ public class PlayerDribbler : MonoBehaviour
     }
 
     // Picks the ball up out of the dribble into both hands. Returns false if
-    // the player isn't dribbling (no ball to shoot).
+    // the player isn't dribbling (no ball to shoot), or while a dribble move is
+    // on its way to the other hand: the ball is under the legs or behind the
+    // back, out of reach, so it can't jump into the hands.
     public bool Gather()
     {
-        if (_state != State.Dribbling) return false;
+        if (_state != State.Dribbling || _move != Move.None) return false;
         _ball.Hold();
         SetState(State.Holding);
         return true;
