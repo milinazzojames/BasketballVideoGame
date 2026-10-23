@@ -108,6 +108,10 @@ public class PlayerBody : MonoBehaviour
     [SerializeField] private float _relaxedHandForward = 0.05f;
     [Tooltip("How far the wrists hang below the shoulders, as a fraction of the arm's length (1 = fully straight).")]
     [SerializeField, Range(0.5f, 1f)] private float _relaxedArmStraightness = 0.95f;
+    [Tooltip("Running: how far each hand swings forward and back, in meters, at full swing speed. The arms swing opposite the legs.")]
+    [SerializeField] private float _runArmSwing = 0.2f;
+    [Tooltip("Running: how far the hands come up at full swing speed, in meters, which bends the elbows.")]
+    [SerializeField] private float _runArmLift = 0.15f;
 
     [Header("Arms reaching")]
     [Tooltip("How far a shoulder lifts when its arm points straight up, in meters. A raised arm pulls the shoulder blade up with it, which is how a 1.62 m shoulder reaches about 2.65 m (standing reach).")]
@@ -238,6 +242,14 @@ public class PlayerBody : MonoBehaviour
         Vector3 shoulder = GetShoulder(side);
         Vector3 wrist = shoulder - up * (ArmLength * _relaxedArmStraightness)
             + right * (side * _relaxedHandOut) + forward * _relaxedHandForward;
+
+        // Running: the arm swings opposite its own leg (forward with the other
+        // leg), and the hand comes up so the elbow bends, more the faster we go.
+        Vector3 flatVelocity = Vector3.ProjectOnPlane(_rigidbody.linearVelocity, Vector3.up);
+        float run = Mathf.Clamp01(flatVelocity.magnitude / _fullSwingSpeed);
+        float legPhase = _stridePhase + (side > 0 ? Mathf.PI : 0f);
+        wrist += forward * (-Mathf.Sin(legPhase) * _runArmSwing * run) + up * (_runArmLift * run);
+
         // Fingers down, palm facing the leg.
         fingerDirection = -up;
         palmDirection = -right * side;
@@ -301,7 +313,7 @@ public class PlayerBody : MonoBehaviour
     // Where the capsule will be at the end of this physics step. The body is
     // posed there (and the shoulder and head positions above use it), so the
     // body isn't a step behind the capsule.
-    private Vector3 PredictedRootPosition => _rigidbody.position + _rigidbody.linearVelocity * Time.fixedDeltaTime;
+    public Vector3 PredictedRootPosition => _rigidbody.position + _rigidbody.linearVelocity * Time.fixedDeltaTime;
 
     // While the player has the ball, it passes through all of their body parts
     // (like it passes through the capsule). When it's loose again, each part

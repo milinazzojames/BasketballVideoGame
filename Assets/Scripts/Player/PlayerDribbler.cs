@@ -36,7 +36,7 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private Basketball _ball;
     [Tooltip("The player's body. While the player has the ball, it passes through every body part, like it passes through the capsule. The ball also has to come up within the arm's reach to be pushed. Optional.")]
     [SerializeField] private PlayerBody _playerBody;
-    [Tooltip("Right-stick flicks are read relative to this camera, like the left stick. Uses the main camera if empty.")]
+    [Tooltip("Right-stick flicks are read relative to this camera's court directions (up = toward the hoop), like the left stick. Uses the main camera if empty.")]
     [SerializeField] private Transform _cameraTransform;
 
     [Header("Dribble (heights are the ball's center, in meters)")]
@@ -92,6 +92,8 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _flickTime = 0.15f;
     [Tooltip("A move starts when the ball comes up to the hand. A flick waits this many seconds for that (a walking dribble takes about 0.5 s), then it's dropped.")]
     [SerializeField] private float _moveBufferTime = 0.6f;
+    [Tooltip("A flick also starts its move right away while the ball is still on its way down from the hand above this height (meters, ball center), since the hand rides on top of it until about knee height. Lower = moves start sooner after a flick; above the hand height = always wait for the ball to come back up.")]
+    [SerializeField] private float _moveStartMinHeight = 0.7f;
     [Tooltip("A fumbled ball can be caught again when it's within this distance below the hand height, in meters (and within the catch radius).")]
     [SerializeField] private float _handReach = 0.3f;
     [Tooltip("How fast the hand pushes the ball down to start a move, in m/s. Softer than a pound dribble, so the ball has time to get across: a 1.2 m crossover takes about 0.4 s at 3.5. Below about 3, it won't come back up to a walking hand height.")]
@@ -341,6 +343,13 @@ public class PlayerDribbler : MonoBehaviour
             vertical = _pendingMove != Move.None ? StartMove() : -pushSpeed;
             // A real hand also stops the ball spinning from its last floor contact.
             _ball.Body.angularVelocity = Vector3.zero;
+        }
+        else if (_pendingMove != Move.None && _move == Move.None && vertical <= 0f && ballPosition.y >= _moveStartMinHeight)
+        {
+            // Flicked while the ball is still under the hand on its way down: the
+            // hand redirects it now instead of waiting a whole bounce. It keeps
+            // whichever is faster, its current speed down or the move's push.
+            vertical = Mathf.Min(vertical, StartMove());
         }
         else if (ballPosition.y < _ball.Radius + 0.02f && Mathf.Abs(vertical) < 0.2f)
         {
@@ -667,15 +676,12 @@ public class PlayerDribbler : MonoBehaviour
         return point;
     }
 
-    // The right stick, turned from camera directions into the player's own
-    // directions (x = player's right, y = player's forward).
+    // The right stick, turned from court directions (up = toward the hoop, like
+    // the left stick) into the player's own directions (x = player's right,
+    // y = player's forward).
     private Vector2 StickToPlayerFrame(Vector2 stick)
     {
-        Vector3 forward = _cameraTransform != null ? _cameraTransform.forward : Vector3.forward;
-        Vector3 right = _cameraTransform != null ? _cameraTransform.right : Vector3.right;
-        forward.y = 0f;
-        right.y = 0f;
-        Vector3 world = forward.normalized * stick.y + right.normalized * stick.x;
+        Vector3 world = BehindPlayerCamera.StickToFloor(stick, _cameraTransform);
         Vector3 local = Quaternion.Inverse(_body.rotation) * world;
         return new Vector2(local.x, local.z).normalized;
     }
