@@ -16,10 +16,11 @@ In scope now:
 - Ball physics: bounce, spin, rim and backboard collisions, shot arcs
 - Dribbling, shooting, and (later) passing as mechanics
 - Tuning values exposed in the Inspector or ScriptableObjects so they can be adjusted while playtesting
+- A **primitive human body** built from code (capsules, spheres, boxes; decided by Jimmy 2026-10-22), with **procedural poses**: arms reaching for the ball with simple IK, a stand/run leg pose, a jump on shots. Today's dribble and shot physics stay in charge; the body follows them.
 
 Out of scope until Jimmy says otherwise:
 - Visual polish, models, materials, lighting, VFX
-- Character animation (use capsules and primitives as stand-ins)
+- Keyframed character animation and imported models (MakeHuman, Mixamo); the primitive body is the stand-in
 - UI beyond a simple debug overlay, menus, audio
 - Rosters, game modes, AI teammates/opponents, scoring rules, online play
 
@@ -123,6 +124,10 @@ Each step is meant to be one or a few small PRs. Check off as they land.
 8. [ ] Debug overlay: show speed, shot timing, release quality, and let values be tweaked live
 9. [ ] Passing to a static target
 10. [ ] Defense basics: stance/slide, hands up, steal attempt (against a dummy)
+
+Human body (a primitive stand-in until the MakeHuman model in the art pipeline below):
+
+- [x] Primitive body: capsules/sphere/boxes named like Humanoid bones, kinematic Rigidbody parts that a loose ball bounces off (`PlayerBody`)
 
 After this, revisit the plan: 1v1, animation, visuals, and game logic.
 

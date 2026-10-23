@@ -34,6 +34,8 @@ public class PlayerDribbler : MonoBehaviour
     [Tooltip("Hesitations and spin moves slow down and turn the player through this.")]
     [SerializeField] private PlayerMovement _movement;
     [SerializeField] private Basketball _ball;
+    [Tooltip("The player's body. While the player has the ball, it passes through every body part, like it passes through the capsule. Optional.")]
+    [SerializeField] private PlayerBody _playerBody;
     [Tooltip("Right-stick flicks are read relative to this camera, like the left stick. Uses the main camera if empty.")]
     [SerializeField] private Transform _cameraTransform;
 
@@ -173,6 +175,7 @@ public class PlayerDribbler : MonoBehaviour
         _collider = GetComponent<Collider>();
         if (_input == null) _input = GetComponent<PlayerInputReader>();
         if (_movement == null) _movement = GetComponent<PlayerMovement>();
+        if (_playerBody == null) _playerBody = GetComponent<PlayerBody>();
         if (_cameraTransform == null && Camera.main != null) _cameraTransform = Camera.main.transform;
         _hand = _startInRightHand ? 1 : -1;
     }
@@ -535,9 +538,12 @@ public class PlayerDribbler : MonoBehaviour
         _wasRising = false;
         _move = Move.None;
         _pendingMove = Move.None;
-        // While the player has the ball, it passes through their capsule, the way
-        // a real ball moves around a player's legs and body instead of bumping off.
-        Physics.IgnoreCollision(_collider, _ball.GetComponent<Collider>(), state != State.Loose);
+        // While the player has the ball, it passes through their capsule and body
+        // parts, the way a real ball moves around a player's legs and body instead
+        // of bumping off. A loose ball bounces off them.
+        Collider ballCollider = _ball.GetComponent<Collider>();
+        Physics.IgnoreCollision(_collider, ballCollider, state != State.Loose);
+        if (_playerBody != null) _playerBody.SetBallIgnored(ballCollider, state != State.Loose);
     }
 
     // Where the hand that has the ball wants it. Uses the physics position and

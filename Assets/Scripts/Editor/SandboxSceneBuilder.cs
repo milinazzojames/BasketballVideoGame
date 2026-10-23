@@ -46,6 +46,10 @@ public static class SandboxSceneBuilder
     private const float PlayerRadius = 0.4f;
     private const float PlayerStartZ = 4f;             // a bit beyond the 3-point line, facing the hoop
     private const float PlayerMass = 98f;              // about 215 lb
+    // Body parts against the ball: averaged with the ball's 0.85, a ball off an
+    // arm or chest bounces about (0.85 + 0.2) / 2 = 0.53, deader than off the floor.
+    private const float BodyBounce = 0.2f;
+    private const float BodyFriction = 0.5f;
 
     // Size 7 basketball.
     private const float BallDiameter = 0.24f;
@@ -108,6 +112,7 @@ public static class SandboxSceneBuilder
         BuildBallTester(ball, player, rim);
         PlayerDribbler dribbler = AddDribbler(player, ball, rim);
         AddShooter(player, dribbler, ball, rim);
+        AddBody(player, dribbler);
 
         EditorSceneManager.SaveScene(scene, ScenePath);
         AddSceneToBuildSettings();
@@ -428,6 +433,23 @@ public static class SandboxSceneBuilder
         meterSettings.FindProperty("_greenMaterial").objectReferenceValue = GetMaterial("MeterGreen", new Color(0.1f, 0.85f, 0.25f), unlit: true);
         meterSettings.FindProperty("_markerMaterial").objectReferenceValue = GetMaterial("MeterMarker", new Color(0.1f, 0.1f, 0.1f), unlit: true);
         meterSettings.ApplyModifiedPropertiesWithoutUndo();
+    }
+
+    // The primitive body: its parts are built under their own top-level
+    // "PlayerBody" object (see PlayerBody for why they aren't under the player).
+    private static void AddBody(Transform player, PlayerDribbler dribbler)
+    {
+        PlayerBody body = player.gameObject.AddComponent<PlayerBody>();
+        SerializedObject serialized = new SerializedObject(body);
+        serialized.FindProperty("_material").objectReferenceValue = GetMaterial("PlayerBody", new Color(0.2f, 0.4f, 0.9f));
+        serialized.FindProperty("_physicsMaterial").objectReferenceValue =
+            GetPhysicsMaterial("BodyPhysics", BodyBounce, BodyFriction, PhysicsMaterialCombine.Average);
+        serialized.ApplyModifiedPropertiesWithoutUndo();
+        body.BuildParts();
+
+        SerializedObject dribblerSettings = new SerializedObject(dribbler);
+        dribblerSettings.FindProperty("_playerBody").objectReferenceValue = body;
+        dribblerSettings.ApplyModifiedPropertiesWithoutUndo();
     }
 
     // These live in Edit > Project Settings (Time and Physics). Setting them here,
