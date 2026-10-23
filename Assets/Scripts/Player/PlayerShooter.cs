@@ -21,6 +21,9 @@ using UnityEngine;
 // point up to the release height (2.7 m, or 3.2 m for a layup), which is above
 // a 1.98 m player's standing reach. The ball leaves from the shooting hand,
 // wherever it is when you let go: release early and it's lower and on the way up.
+// Pressing Shoot turns the player to face the hoop, and they keep facing it
+// through the shot. Pressed in the middle of a dribble move, the press is
+// remembered for a moment and the shot starts as soon as the ball reaches the hand.
 // Planned (roadmap): a green shot nobody touches is guaranteed to go in.
 [DefaultExecutionOrder(-10)]   // carries the held ball before the dribbler moves it this step
 public class PlayerShooter : MonoBehaviour
@@ -36,6 +39,14 @@ public class PlayerShooter : MonoBehaviour
     [SerializeField] private PlayerBody _body;
     [Tooltip("Makes the player jump on a shot. Uses the one on this object if empty.")]
     [SerializeField] private PlayerMovement _movement;
+
+    [Header("Starting the shot")]
+    [Tooltip("How fast the player turns to face the hoop once Shoot is pressed, in degrees per second. 1080 turns all the way around in about 0.17 s.")]
+    [SerializeField] private float _turnToHoopSpeed = 1080f;
+    [Tooltip("Seconds the player keeps facing the hoop after the ball leaves the hand (the follow-through and landing).")]
+    [SerializeField] private float _faceHoopAfterRelease = 0.4f;
+    [Tooltip("Shoot pressed during a dribble move is remembered this many seconds; the shot starts as soon as the ball reaches the hand. After that the press is dropped.")]
+    [SerializeField] private float _shootBufferTime = 0.25f;
 
     [Header("Shot motion (with a body)")]
     [Tooltip("Shoot with the right hand (off = left hand).")]
@@ -128,6 +139,7 @@ public class PlayerShooter : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float _bankShotChance = 0.6f;
 
     private float _holdStartTime;
+    private float _bufferedShootUntil = float.NegativeInfinity;
 
     // The jump for the shot being charged.
     private bool _chargingLayup;
@@ -173,15 +185,25 @@ public class PlayerShooter : MonoBehaviour
 
     private void Update()
     {
+        // A Shoot press from the middle of a dribble move starts the shot once the ball is in the hand.
+        if (Time.time <= _bufferedShootUntil && !IsCharging && !_dribbler.IsDoingMove)
+        {
+            _bufferedShootUntil = float.NegativeInfinity;
+            StartCharging();
+        }
+
         // Holding all the way to the top lets the shot go by itself.
         if (IsCharging && MeterFill >= 1f) Release();
     }
 
-    // While charging: the ball rises with the meter from the chest to the set
-    // point, the player jumps, and the arm pushes the ball up to the release
-    // point by the top of the jump.
+    // While charging: the player turns to face the hoop, the ball rises with
+    // the meter from the chest to the set point, the player jumps, and the arm
+    // pushes the ball up to the release point by the top of the jump.
     private void FixedUpdate()
     {
+        bool facingHoop = IsCharging || Time.time - LastReleaseTime < _faceHoopAfterRelease;
+        if (facingHoop && _movement != null && _rim != null) _movement.FaceDirection(ShotDirection, _turnToHoopSpeed);
+
         if (!IsCharging || _body == null || _rim == null) return;
 
         if (!_jumped && Time.time >= _takeoffTime)
@@ -231,8 +253,14 @@ public class PlayerShooter : MonoBehaviour
 
     private void StartCharging()
     {
-        // No ball, no shot.
-        if (_dribbler == null || !_dribbler.Gather()) return;
+        if (_dribbler == null) return;
+        if (!_dribbler.Gather())
+        {
+            // Mid-move, the ball is on its way to the other hand: shoot once it gets there.
+            if (_dribbler.IsDoingMove) _bufferedShootUntil = Time.time + _shootBufferTime;
+            // Otherwise there's no ball, so no shot.
+            return;
+        }
 
         IsCharging = true;
         _holdStartTime = Time.time;
@@ -291,6 +319,8 @@ public class PlayerShooter : MonoBehaviour
 
     private void Release()
     {
+        // Let go before a remembered press turned into a shot: forget it.
+        _bufferedShootUntil = float.NegativeInfinity;
         if (!IsCharging) return;
 
         float fill = MeterFill;
