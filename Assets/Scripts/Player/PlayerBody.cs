@@ -109,6 +109,20 @@ public class PlayerBody : MonoBehaviour
     [Tooltip("How far the wrists hang below the shoulders, as a fraction of the arm's length (1 = fully straight).")]
     [SerializeField, Range(0.5f, 1f)] private float _relaxedArmStraightness = 0.95f;
 
+    [Header("Arms reaching")]
+    [Tooltip("How far a shoulder lifts when its arm points straight up, in meters. A raised arm pulls the shoulder blade up with it, which is how a 1.62 m shoulder reaches about 2.65 m (standing reach).")]
+    [SerializeField] private float _shoulderLiftOverhead = 0.2f;
+    [Tooltip("Elbow hint for relaxed arms, in the player's frame for the right arm (x = out to the side, y = up, z = forward). The left arm is mirrored.")]
+    [SerializeField] private Vector3 _relaxedElbowHint = new Vector3(1f, 0f, -0.5f);
+
+    [Header("Crouch (asked for by PlayerArms, e.g. for a low dribble)")]
+    [Tooltip("Deepest crouch: how far the hips can drop, in meters.")]
+    [SerializeField] private float _maxCrouch = 0.4f;
+    [Tooltip("How far the upper body leans forward at the deepest crouch, in degrees.")]
+    [SerializeField] private float _maxCrouchLean = 15f;
+    [Tooltip("How fast the hips move down or up into the asked-for crouch, in m/s.")]
+    [SerializeField] private float _crouchSpeed = 1.5f;
+
     private static readonly int BoneCount = System.Enum.GetValues(typeof(Bone)).Length;
 
     private Rigidbody _rigidbody;
@@ -126,9 +140,109 @@ public class PlayerBody : MonoBehaviour
     private bool[] _ignoringBall;
     private bool _turningBallBackOn;
 
+    private float _crouch;
+    private float _crouchTarget;
+
+    // Hand targets set by PlayerArms for this step (index 0 = left, 1 = right).
+    private readonly bool[] _hasHandTarget = new bool[2];
+    private readonly Vector3[] _palmTarget = new Vector3[2];
+    private readonly Quaternion[] _handTargetRotation = new Quaternion[2];
+    private readonly Vector3[] _elbowHint = new Vector3[2];
+    // Where each palm ended up after solving the arm.
+    private readonly Vector3[] _palm = new Vector3[2];
+    private readonly Vector3[] _palmNormal = new Vector3[2];
+
     // Where the hips joint is when standing, above the soles.
     private float LegHeight => _ankleHeight + _upperLegLength + _lowerLegLength;
     private float ArmLength => _upperArmLength + _lowerArmLength;
+
+    // Shoulder to the middle of the palm, with the arm straight.
+    public float ArmReach => _upperArmLength + _lowerArmLength + _handLength / 2f;
+    // Height of the shoulders above the soles, standing (with the small knee bend).
+    public float StandingShoulderHeight => _shoulderHeight - _kneeBend;
+    public float ShoulderLiftOverhead => _shoulderLiftOverhead;
+    public float HandThickness => _handSize.y;
+    public float MaxCrouch => _maxCrouch;
+    // Height of the soles (the bottom of the capsule) after this physics step.
+    public float SolesHeight => PredictedRootPosition.y - _capsuleHalfHeight;
+
+    private static int SideIndex(int side) => side > 0 ? 1 : 0;
+
+    // Asks the body to crouch this far (meters the hips drop). It eases in at the crouch speed.
+    public void SetCrouch(float meters)
+    {
+        _crouchTarget = Mathf.Clamp(meters, 0f, _maxCrouch);
+    }
+
+    // Puts a hand's palm at a point for this physics step (side: +1 = right, -1 = left).
+    // palmDirection is the way the palm faces (out of the palm, toward what it
+    // touches); fingerDirection is where the fingers point (it's made square to
+    // the palm). The elbow bends toward elbowHint. Without a target, the arm hangs relaxed.
+    public void SetHandTarget(int side, Vector3 palmPoint, Vector3 fingerDirection, Vector3 palmDirection, Vector3 elbowHint)
+    {
+        int i = SideIndex(side);
+        _hasHandTarget[i] = true;
+        _palmTarget[i] = palmPoint;
+        _handTargetRotation[i] = HandRotation(fingerDirection, palmDirection);
+        _elbowHint[i] = elbowHint;
+    }
+
+    // Where a palm is (the middle of its surface) and which way it faces, as of the last physics step.
+    public void GetPalm(int side, out Vector3 point, out Vector3 normal)
+    {
+        point = _palm[SideIndex(side)];
+        normal = _palmNormal[SideIndex(side)];
+    }
+
+    // A shoulder joint, relative to the player's capsule (its center and facing),
+    // with the current crouch. Doesn't include the lift of a raised arm.
+    public Vector3 GetShoulderLocal(int side)
+    {
+        GetTorso(out Vector3 hips, out Quaternion torso);
+        return hips + torso * new Vector3(side * _shoulderWidth / 2f, _shoulderHeight - LegHeight, 0f);
+    }
+
+    // A shoulder joint in the world, where the capsule will be after this physics step.
+    public Vector3 GetShoulder(int side)
+    {
+        return PredictedRootPosition + _rigidbody.rotation * GetShoulderLocal(side);
+    }
+
+    // The center of the head in the world, where the capsule will be after this physics step.
+    public Vector3 GetHeadCenter()
+    {
+        GetTorso(out Vector3 hips, out Quaternion torso);
+        float neckTop = _shoulderHeight - LegHeight + _neckBaseAboveShoulders + _neckLength;
+        return PredictedRootPosition + _rigidbody.rotation * (hips + torso * new Vector3(0f, neckTop + _headRadius, 0f));
+    }
+
+    // The relaxed hand pose, hanging at the side: where the palm is, where the
+    // fingers point and which way the palm faces. PlayerArms blends to it.
+    public void GetRelaxedHand(int side, out Vector3 palmPoint, out Vector3 fingerDirection, out Vector3 palmDirection, out Vector3 elbowHint)
+    {
+        Quaternion rotation = _rigidbody.rotation;
+        Vector3 up = rotation * Vector3.up;
+        Vector3 right = rotation * Vector3.right;
+        Vector3 forward = rotation * Vector3.forward;
+        Vector3 shoulder = GetShoulder(side);
+        Vector3 wrist = shoulder - up * (ArmLength * _relaxedArmStraightness)
+            + right * (side * _relaxedHandOut) + forward * _relaxedHandForward;
+        // Fingers down, palm facing the leg.
+        fingerDirection = -up;
+        palmDirection = -right * side;
+        palmPoint = PalmFromWrist(wrist, HandRotation(fingerDirection, palmDirection));
+        elbowHint = rotation * Vector3.Scale(_relaxedElbowHint, new Vector3(side, 1f, 1f));
+    }
+
+    // The hips joint (relative to the capsule's center) and the upper body's
+    // tilt, with the current crouch: the hips drop and the upper body leans forward.
+    private void GetTorso(out Vector3 hips, out Quaternion torso)
+    {
+        hips = new Vector3(0f, LegHeight - _kneeBend - _crouch - _capsuleHalfHeight, 0f);
+        float lean = _maxCrouch > 0f ? _maxCrouchLean * _crouch / _maxCrouch : 0f;
+        // A positive turn around the X axis tips the top forward.
+        torso = Quaternion.Euler(lean, 0f, 0f);
+    }
 
     private void Awake()
     {
@@ -163,13 +277,20 @@ public class PlayerBody : MonoBehaviour
     {
         if (_parts == null) return;
 
-        // Where the capsule will be at the end of this physics step, so the body
-        // isn't a step behind it.
-        Vector3 rootPosition = _rigidbody.position + _rigidbody.linearVelocity * Time.fixedDeltaTime;
-        ComputePose(rootPosition, _rigidbody.rotation, _rigidbody.linearVelocity, Time.fixedDeltaTime);
+        _crouch = Mathf.MoveTowards(_crouch, _crouchTarget, _crouchSpeed * Time.fixedDeltaTime);
+        ComputePose(PredictedRootPosition, _rigidbody.rotation, _rigidbody.linearVelocity, Time.fixedDeltaTime);
         MoveParts();
         TurnBallCollisionsBackOn();
+
+        // Hand targets only last one step; PlayerArms sets them again every step.
+        _hasHandTarget[0] = false;
+        _hasHandTarget[1] = false;
     }
+
+    // Where the capsule will be at the end of this physics step. The body is
+    // posed there (and the shoulder and head positions above use it), so the
+    // body isn't a step behind the capsule.
+    private Vector3 PredictedRootPosition => _rigidbody.position + _rigidbody.linearVelocity * Time.fixedDeltaTime;
 
     // While the player has the ball, it passes through all of their body parts
     // (like it passes through the capsule). When it's loose again, each part
@@ -233,32 +354,73 @@ public class PlayerBody : MonoBehaviour
         // Measured from the capsule (not the floor), so the legs leave the floor with it in a jump.
         Vector3 soles = rootPosition - up * _capsuleHalfHeight;
 
-        // Torso: straight up from the hips.
-        Vector3 hips = soles + up * (LegHeight - _kneeBend);
-        Vector3 spine = hips + up * _hipsLength;
-        Vector3 chest = spine + up * _spineLength;
-        Vector3 shoulders = hips + up * (_shoulderHeight - LegHeight);
-        Vector3 neck = shoulders + up * _neckBaseAboveShoulders;
-        Vector3 head = neck + up * _neckLength;
+        // Torso: up from the hips, leaning forward in a crouch.
+        GetTorso(out Vector3 hipsLocal, out Quaternion torsoLocal);
+        Quaternion torsoRotation = rootRotation * torsoLocal;
+        Vector3 torsoUp = torsoRotation * Vector3.up;
+        Vector3 hips = rootPosition + rootRotation * hipsLocal;
+        Vector3 spine = hips + torsoUp * _hipsLength;
+        Vector3 chest = spine + torsoUp * _spineLength;
+        Vector3 shoulders = hips + torsoUp * (_shoulderHeight - LegHeight);
+        Vector3 neck = shoulders + torsoUp * _neckBaseAboveShoulders;
+        Vector3 head = neck + torsoUp * _neckLength;
 
+        // The hips stay level; everything above them leans.
         SetBone(Bone.Hips, hips, rootRotation);
-        SetBone(Bone.Spine, spine, rootRotation);
-        SetBone(Bone.Chest, chest, rootRotation);
-        SetBone(Bone.Neck, neck, rootRotation);
-        SetBone(Bone.Head, head, rootRotation);
+        SetBone(Bone.Spine, spine, torsoRotation);
+        SetBone(Bone.Chest, chest, torsoRotation);
+        SetBone(Bone.Neck, neck, torsoRotation);
+        SetBone(Bone.Head, head, torsoRotation);
 
         PoseLegs(hips, soles, up, forward, right, velocity, deltaTime);
 
+        Vector3 torsoRight = torsoRotation * Vector3.right;
         for (int side = -1; side <= 1; side += 2)
         {
-            Vector3 shoulder = shoulders + right * (side * _shoulderWidth / 2f);
-            // Relaxed: hanging down, a little out to the side and forward.
-            Vector3 wrist = shoulder - up * (ArmLength * _relaxedArmStraightness)
-                + right * (side * _relaxedHandOut) + forward * _relaxedHandForward;
-            Vector3 elbowHint = right * side - forward * 0.5f;
-            // Fingers down, palm facing the leg.
-            PoseArm(side, shoulder, wrist, elbowHint, -up, -right * side, forward);
+            int i = SideIndex(side);
+            Vector3 shoulder = shoulders + torsoRight * (side * _shoulderWidth / 2f);
+
+            Vector3 palm;
+            Quaternion handRotation;
+            Vector3 elbowHint;
+            if (_hasHandTarget[i])
+            {
+                palm = _palmTarget[i];
+                handRotation = _handTargetRotation[i];
+                elbowHint = _elbowHint[i];
+            }
+            else
+            {
+                // Relaxed: hanging down, a little out to the side and forward,
+                // fingers down and the palm facing the leg.
+                Vector3 wristRelaxed = shoulder - up * (ArmLength * _relaxedArmStraightness)
+                    + right * (side * _relaxedHandOut) + forward * _relaxedHandForward;
+                handRotation = HandRotation(-up, -right * side);
+                palm = PalmFromWrist(wristRelaxed, handRotation);
+                elbowHint = rootRotation * Vector3.Scale(_relaxedElbowHint, new Vector3(side, 1f, 1f));
+            }
+
+            // A raised arm lifts its shoulder (more the closer to straight up it points).
+            Vector3 wristTarget = WristFromPalm(palm, handRotation);
+            float pointingUp = Mathf.Max(0f, Vector3.Dot((wristTarget - shoulder).normalized, up));
+            shoulder += up * (_shoulderLiftOverhead * pointingUp);
+
+            Vector3 wrist = PoseArm(side, shoulder, wristTarget, elbowHint, handRotation, forward);
+            _palm[i] = PalmFromWrist(wrist, handRotation);
+            _palmNormal[i] = handRotation * Vector3.forward;
         }
+    }
+
+    // The hand box runs from the wrist along the fingers (its Y axis); the
+    // palm is the middle of its front face (its Z axis points out of the palm).
+    private Vector3 PalmFromWrist(Vector3 wrist, Quaternion handRotation)
+    {
+        return wrist + handRotation * new Vector3(0f, _handLength / 2f, _handSize.y / 2f);
+    }
+
+    private Vector3 WristFromPalm(Vector3 palm, Quaternion handRotation)
+    {
+        return palm - handRotation * new Vector3(0f, _handLength / 2f, _handSize.y / 2f);
     }
 
     // A simple stand/run pose: the feet stay under the hips (a knee bend comes
@@ -296,10 +458,10 @@ public class PlayerBody : MonoBehaviour
         }
     }
 
-    // Solves one arm and sets its three parts. The hand's rotation comes from
-    // where its fingers point and which way its palm faces.
-    private void PoseArm(int side, Vector3 shoulder, Vector3 wristTarget, Vector3 elbowHint,
-        Vector3 fingerDirection, Vector3 palmDirection, Vector3 boneForward)
+    // Solves one arm, sets its three parts, and returns where the wrist ended
+    // up (short of the target if it's out of reach).
+    private Vector3 PoseArm(int side, Vector3 shoulder, Vector3 wristTarget, Vector3 elbowHint,
+        Quaternion handRotation, Vector3 boneForward)
     {
         TwoBoneIK.Solve(shoulder, wristTarget, elbowHint, _upperArmLength, _lowerArmLength, out Vector3 elbow, out Vector3 wrist);
 
@@ -308,13 +470,18 @@ public class PlayerBody : MonoBehaviour
         Bone hand = side > 0 ? Bone.RightHand : Bone.LeftHand;
         SetBone(upper, shoulder, AlongBone(elbow - shoulder, boneForward));
         SetBone(lower, elbow, AlongBone(wrist - elbow, boneForward));
-        SetBone(hand, wrist, HandRotation(fingerDirection, palmDirection));
+        SetBone(hand, wrist, handRotation);
+        return wrist;
     }
 
-    // A hand's rotation: Y along the fingers, Z out of the palm.
+    // A hand's rotation: Z out of the palm (exactly), Y along the fingers (made square to the palm).
     private static Quaternion HandRotation(Vector3 fingerDirection, Vector3 palmDirection)
     {
-        return AlongBone(fingerDirection, palmDirection);
+        if (palmDirection.sqrMagnitude < 0.000001f) palmDirection = Vector3.forward;
+        Vector3 fingers = Vector3.ProjectOnPlane(fingerDirection, palmDirection);
+        if (fingers.sqrMagnitude < 0.000001f) fingers = Vector3.ProjectOnPlane(Vector3.up, palmDirection);
+        if (fingers.sqrMagnitude < 0.000001f) fingers = Vector3.ProjectOnPlane(Vector3.forward, palmDirection);
+        return Quaternion.LookRotation(palmDirection, fingers);
     }
 
     // A rotation whose Y axis points along the bone, with its Z axis turned as

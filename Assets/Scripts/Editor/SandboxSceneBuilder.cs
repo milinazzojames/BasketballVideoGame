@@ -112,7 +112,7 @@ public static class SandboxSceneBuilder
         BuildBallTester(ball, player, rim);
         PlayerDribbler dribbler = AddDribbler(player, ball, rim);
         AddShooter(player, dribbler, ball, rim);
-        AddBody(player, dribbler);
+        AddBody(player, dribbler, ball);
 
         EditorSceneManager.SaveScene(scene, ScenePath);
         AddSceneToBuildSettings();
@@ -437,7 +437,7 @@ public static class SandboxSceneBuilder
 
     // The primitive body: its parts are built under their own top-level
     // "PlayerBody" object (see PlayerBody for why they aren't under the player).
-    private static void AddBody(Transform player, PlayerDribbler dribbler)
+    private static void AddBody(Transform player, PlayerDribbler dribbler, Basketball ball)
     {
         PlayerBody body = player.gameObject.AddComponent<PlayerBody>();
         SerializedObject serialized = new SerializedObject(body);
@@ -450,6 +450,20 @@ public static class SandboxSceneBuilder
         SerializedObject dribblerSettings = new SerializedObject(dribbler);
         dribblerSettings.FindProperty("_playerBody").objectReferenceValue = body;
         dribblerSettings.ApplyModifiedPropertiesWithoutUndo();
+
+        PlayerShooter shooter = player.GetComponent<PlayerShooter>();
+        SerializedObject shooterSettings = new SerializedObject(shooter);
+        shooterSettings.FindProperty("_body").objectReferenceValue = body;
+        shooterSettings.ApplyModifiedPropertiesWithoutUndo();
+
+        // The arms reach for the ball.
+        PlayerArms arms = player.gameObject.AddComponent<PlayerArms>();
+        SerializedObject armSettings = new SerializedObject(arms);
+        armSettings.FindProperty("_body").objectReferenceValue = body;
+        armSettings.FindProperty("_dribbler").objectReferenceValue = dribbler;
+        armSettings.FindProperty("_shooter").objectReferenceValue = shooter;
+        armSettings.FindProperty("_ball").objectReferenceValue = ball;
+        armSettings.ApplyModifiedPropertiesWithoutUndo();
     }
 
     // These live in Edit > Project Settings (Time and Physics). Setting them here,

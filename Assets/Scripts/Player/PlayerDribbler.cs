@@ -34,7 +34,7 @@ public class PlayerDribbler : MonoBehaviour
     [Tooltip("Hesitations and spin moves slow down and turn the player through this.")]
     [SerializeField] private PlayerMovement _movement;
     [SerializeField] private Basketball _ball;
-    [Tooltip("The player's body. While the player has the ball, it passes through every body part, like it passes through the capsule. Optional.")]
+    [Tooltip("The player's body. While the player has the ball, it passes through every body part, like it passes through the capsule. The ball also has to come up within the arm's reach to be pushed. Optional.")]
     [SerializeField] private PlayerBody _playerBody;
     [Tooltip("Right-stick flicks are read relative to this camera, like the left stick. Uses the main camera if empty.")]
     [SerializeField] private Transform _cameraTransform;
@@ -128,6 +128,8 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _maxMoveTime = 1.5f;
     [Tooltip("Seconds a fumbled ball can still be caught again, if it comes back up near the hand. After that (or once it's past the lose distance) the dribble is lost.")]
     [SerializeField] private float _fumbleTime = 1f;
+    [Tooltip("With a body: when the ball comes up to the hand, its center has to be within the arm's reach (shoulder to palm) plus the ball's radius plus this much, in meters, or the hand can't push it and it's fumbled. Covers the leaning and reaching the primitive body doesn't do.")]
+    [SerializeField] private float _reachSlack = 0.1f;
 
     [Header("Picking up a loose ball")]
     [Tooltip("A loose ball this close to the player's center (meters, along the floor) gets picked up.")]
@@ -165,9 +167,27 @@ public class PlayerDribbler : MonoBehaviour
     private bool _flickWaiting;
     private Vector2 _flickDirection;
     private float _fumbleStartTime;
+    private float _currentHandHeight;
+    private Vector3 _heldBallTarget;
+    private bool _hasCarryTarget;
+    private Vector3 _carryTarget;
 
     public bool HasBall => _state != State.Loose;
     public bool IsBallInRightHand => _hand > 0;
+    // Bouncing the ball (or trying to catch a fumbled one).
+    public bool IsDribbling => _state == State.Dribbling || _state == State.Fumbling;
+    // Holding the ball in both hands (gathered for a shot).
+    public bool IsHolding => _state == State.Holding;
+    // The hand the ball belongs to: +1 = right, -1 = left. During a move it's
+    // the hand the ball is going to.
+    public int BallHand => _hand;
+    // The hand touching the ball: during a move, until the ball bounces, it's
+    // still the hand that pushed it; then it's the new hand.
+    public int TouchHand => _move != Move.None && _move != Move.Hesitation && !_moveBounced ? -_hand : _hand;
+    // The height (ball center) the hand meets the ball at right now, in meters.
+    public float CurrentHandHeight => _currentHandHeight;
+    // Where the held ball is being carried to this step.
+    public Vector3 HeldBallTarget => _heldBallTarget;
 
     private void Awake()
     {
@@ -199,8 +219,14 @@ public class PlayerDribbler : MonoBehaviour
                 break;
             case State.Holding:
                 // Something else (like the R/T test keys) took the ball out of the hands.
-                if (!_ball.IsHeld) SetState(State.Loose);
-                else _ball.MoveHeld(HoldPoint());
+                if (!_ball.IsHeld)
+                {
+                    SetState(State.Loose);
+                    break;
+                }
+                // The shooter carries the ball up into the shot; otherwise it's held at the chest.
+                _heldBallTarget = _hasCarryTarget ? _carryTarget : HoldPoint();
+                _ball.MoveHeld(_heldBallTarget);
                 break;
         }
     }
@@ -215,6 +241,29 @@ public class PlayerDribbler : MonoBehaviour
         _ball.Hold();
         SetState(State.Holding);
         return true;
+    }
+
+    // While holding, carries the ball to this point (the shooter lifts it into
+    // the shot). It stays there until the next call, or until the ball is let go.
+    public void CarryHeldBall(Vector3 point)
+    {
+        if (_state != State.Holding) return;
+        _hasCarryTarget = true;
+        _carryTarget = point;
+    }
+
+    // Where the ball is held at the chest, before the shot lifts it.
+    public Vector3 GetHoldPoint()
+    {
+        return HoldPoint();
+    }
+
+    // Where a hand (+1 = right, -1 = left) wants the ball, at the hand height it's dribbled at now.
+    public Vector3 GetHandPoint(int hand)
+    {
+        Vector3 point = HandPoint(_body.rotation, hand);
+        point.y = _currentHandHeight;
+        return point;
     }
 
     // The ball leaves the hands (a shot). It's a normal physics ball again.
@@ -239,6 +288,7 @@ public class PlayerDribbler : MonoBehaviour
         KeepBallAwayFromDefense();
         // A move's ball comes up higher than a low pound or protect dribble before the hand takes it.
         if (_move != Move.None) handHeight = Mathf.Max(handHeight, _moveCatchHeight);
+        _currentHandHeight = handHeight;
 
         // A flick that waited too long for the ball to come up to the hand is dropped.
         if (_pendingMove != Move.None && Time.time - _pendingTime > _moveBufferTime) _pendingMove = Move.None;
@@ -263,6 +313,15 @@ public class PlayerDribbler : MonoBehaviour
                     Fumble("Fumbled the move: the ball didn't come up to the hand.");
                     return;
                 }
+            }
+
+            // The hand is on the end of an arm: if the ball comes up too far
+            // from the shoulder (say, it drifted out while turning hard at full
+            // speed), the hand can't get on top of it to push it.
+            if (!IsWithinReach(ballPosition))
+            {
+                Fumble("Fumbled: the ball came up out of the hand's reach.");
+                return;
             }
 
             // A flicked move starts here, as the ball comes up to the hand;
@@ -479,6 +538,7 @@ public class PlayerDribbler : MonoBehaviour
         }
 
         GetDribbleHeightAndPush(out float handHeight, out _);
+        _currentHandHeight = handHeight;
         if (FlatDistance(ballPosition, HandPoint()) <= _catchRadius && IsBallAtHand(handHeight))
         {
             Debug.Log("Recovered the dribble.");
@@ -515,6 +575,15 @@ public class PlayerDribbler : MonoBehaviour
         return _ball.Body.position.y >= handHeight - _handReach;
     }
 
+    // Can the hand that has the ball get on top of it? Measured from the body's
+    // shoulder to the ball's center. Without a body, the hand reaches anywhere.
+    private bool IsWithinReach(Vector3 ballPosition)
+    {
+        if (_playerBody == null) return true;
+        Vector3 shoulder = _body.position + _body.rotation * _playerBody.GetShoulderLocal(_hand);
+        return Vector3.Distance(shoulder, ballPosition) <= _playerBody.ArmReach + _ball.Radius + _reachSlack;
+    }
+
     private bool CanPickUp()
     {
         if (_ball.IsHeld || Time.time - _letGoTime < _pickupDelayAfterShot) return false;
@@ -538,6 +607,7 @@ public class PlayerDribbler : MonoBehaviour
         _wasRising = false;
         _move = Move.None;
         _pendingMove = Move.None;
+        _hasCarryTarget = false;
         // While the player has the ball, it passes through their capsule and body
         // parts, the way a real ball moves around a player's legs and body instead
         // of bumping off. A loose ball bounces off them.
@@ -551,16 +621,16 @@ public class PlayerDribbler : MonoBehaviour
     // really is this physics step.
     private Vector3 HandPoint()
     {
-        return HandPoint(_body.rotation);
+        return HandPoint(_body.rotation, _hand);
     }
 
-    // Where the hand would be with the body turned this way.
-    private Vector3 HandPoint(Quaternion bodyRotation)
+    // Where a hand (+1 = right, -1 = left) would want the ball with the body turned this way.
+    private Vector3 HandPoint(Quaternion bodyRotation, int hand)
     {
         float protect = _input.Protect;
         float side = Mathf.Lerp(_sideOffset, _protectSideOffset, protect);
         float forward = Mathf.Lerp(_forwardOffset, _protectForwardOffset, protect);
-        return _body.position + bodyRotation * new Vector3(side * _hand, 0f, forward);
+        return _body.position + bodyRotation * new Vector3(side * hand, 0f, forward);
     }
 
     // Where the hand takes the ball at the end of a move. During a spin the hand
@@ -569,7 +639,7 @@ public class PlayerDribbler : MonoBehaviour
     // as at the start) while the body spins around it.
     private Vector3 MoveCatchPoint()
     {
-        return _move == Move.Spin ? HandPoint(_moveStartRotation) : HandPoint();
+        return _move == Move.Spin ? HandPoint(_moveStartRotation, _hand) : HandPoint();
     }
 
     private Vector3 HoldPoint()
