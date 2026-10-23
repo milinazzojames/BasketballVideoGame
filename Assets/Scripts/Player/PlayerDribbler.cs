@@ -138,6 +138,8 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _pickupMaxHeight = 1.6f;
     [Tooltip("Seconds after a shot (or a lost dribble) before the player can pick the ball up again, so it isn't grabbed right back.")]
     [SerializeField] private float _pickupDelayAfterShot = 1f;
+    [Tooltip("Seconds a shot keeps passing through the shooter's own capsule and body after it leaves the hand. The hand releases it inside the capsule (near the head), and bumping into it there would knock the shot off its line.")]
+    [SerializeField] private float _shotPassThroughTime = 0.5f;
 
     [Header("Holding (while charging a shot)")]
     [Tooltip("How far in front of the player's center the ball is held, in meters.")]
@@ -167,6 +169,7 @@ public class PlayerDribbler : MonoBehaviour
     private bool _flickWaiting;
     private Vector2 _flickDirection;
     private float _fumbleStartTime;
+    private float _passThroughUntil = float.NegativeInfinity;
     private float _currentHandHeight;
     private Vector3 _heldBallTarget;
     private bool _hasCarryTarget;
@@ -207,6 +210,12 @@ public class PlayerDribbler : MonoBehaviour
         switch (_state)
         {
             case State.Loose:
+                // A shot that has had time to get clear starts bumping into the shooter again.
+                if (Time.time >= _passThroughUntil && _passThroughUntil > float.NegativeInfinity)
+                {
+                    _passThroughUntil = float.NegativeInfinity;
+                    IgnoreOwnBall(false);
+                }
                 if (CanPickUp()) PickUp();
                 break;
             case State.Dribbling:
@@ -273,6 +282,9 @@ public class PlayerDribbler : MonoBehaviour
         _ball.Release();
         _letGoTime = Time.time;
         SetState(State.Loose);
+        // The shot flies through the shooter's own capsule and arms for a moment.
+        IgnoreOwnBall(true);
+        _passThroughUntil = Time.time + _shotPassThroughTime;
     }
 
     private void Dribble()
@@ -608,12 +620,18 @@ public class PlayerDribbler : MonoBehaviour
         _move = Move.None;
         _pendingMove = Move.None;
         _hasCarryTarget = false;
+        _passThroughUntil = float.NegativeInfinity;
         // While the player has the ball, it passes through their capsule and body
         // parts, the way a real ball moves around a player's legs and body instead
         // of bumping off. A loose ball bounces off them.
+        IgnoreOwnBall(state != State.Loose);
+    }
+
+    private void IgnoreOwnBall(bool ignore)
+    {
         Collider ballCollider = _ball.GetComponent<Collider>();
-        Physics.IgnoreCollision(_collider, ballCollider, state != State.Loose);
-        if (_playerBody != null) _playerBody.SetBallIgnored(ballCollider, state != State.Loose);
+        Physics.IgnoreCollision(_collider, ballCollider, ignore);
+        if (_playerBody != null) _playerBody.SetBallIgnored(ballCollider, ignore);
     }
 
     // Where the hand that has the ball wants it. Uses the physics position and

@@ -202,6 +202,17 @@ public class PlayerBody : MonoBehaviour
         return hips + torso * new Vector3(side * _shoulderWidth / 2f, _shoulderHeight - LegHeight, 0f);
     }
 
+    // The closest point to this one that a hand can hold a ball at: within the
+    // arm's reach of the shoulder (lifted as the arm points up), plus extra
+    // (the ball's radius, for a ball sitting on the palm).
+    public Vector3 ClampToReach(int side, Vector3 point, float extra)
+    {
+        Vector3 shoulder = GetShoulder(side);
+        float pointingUp = Mathf.Max(0f, Vector3.Dot((point - shoulder).normalized, Vector3.up));
+        shoulder += Vector3.up * (_shoulderLiftOverhead * pointingUp);
+        return shoulder + Vector3.ClampMagnitude(point - shoulder, ArmReach + extra);
+    }
+
     // A shoulder joint in the world, where the capsule will be after this physics step.
     public Vector3 GetShoulder(int side)
     {
