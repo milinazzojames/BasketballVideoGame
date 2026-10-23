@@ -129,6 +129,7 @@ Human body (a primitive stand-in until the MakeHuman model in the art pipeline b
 
 - [x] Primitive body: capsules/sphere/boxes named like Humanoid bones, kinematic Rigidbody parts that a loose ball bounces off (`PlayerBody`)
 - [x] Arms reach for the ball with two-bone IK (`PlayerArms`, `TwoBoneIK`): hand on the ball while dribbling, guard arm, two hands holding, lift to the set point, follow-through; the ball has to come up within the arm's reach or it's fumbled
+- [x] Shot jump: a real Rigidbody jump timed so the top of the jump is the middle of the green window; the arm takes the ball to the 2.7 m (layup 3.2 m) release point and the ball leaves from the shooting hand
 
 After this, revisit the plan: 1v1, animation, visuals, and game logic.
 

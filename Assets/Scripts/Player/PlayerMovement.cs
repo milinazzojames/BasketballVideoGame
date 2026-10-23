@@ -11,8 +11,12 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private PlayerInputReader _input;
     [Tooltip("Movement directions are relative to this camera. Uses the main camera if empty.")]
     [SerializeField] private Transform _cameraTransform;
+    [Tooltip("A jump only starts with the floor within this distance below the capsule, in meters.")]
+    [SerializeField] private float _groundCheckDistance = 0.1f;
 
     private Rigidbody _rigidbody;
+    private float _capsuleHalfHeight = 1f;
+    private readonly RaycastHit[] _groundHits = new RaycastHit[8];
     private float _slowDownMultiplier = 1f;
     private float _slowDownUntil = float.NegativeInfinity;
     private float _spinDegreesLeft;
@@ -38,9 +42,35 @@ public class PlayerMovement : MonoBehaviour
         _spinSpeed = Mathf.Abs(degrees) / Mathf.Max(seconds, 0.01f);
     }
 
+    // Jumps straight up at this speed (m/s), if standing on the floor. Gravity
+    // brings the player back down; the stick still moves them while in the air.
+    // Returns false if they're already in the air.
+    public bool Jump(float upSpeed)
+    {
+        if (!IsOnFloor()) return false;
+        Vector3 velocity = _rigidbody.linearVelocity;
+        velocity.y = upSpeed;
+        _rigidbody.linearVelocity = velocity;
+        return true;
+    }
+
+    // Looks straight down from the capsule's center for the floor. Things with
+    // a Rigidbody (the ball, the player's own body parts) don't count.
+    private bool IsOnFloor()
+    {
+        int count = Physics.RaycastNonAlloc(_rigidbody.position, Vector3.down, _groundHits,
+            _capsuleHalfHeight + _groundCheckDistance, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < count; i++)
+        {
+            if (_groundHits[i].collider.attachedRigidbody == null) return true;
+        }
+        return false;
+    }
+
     private void Awake()
     {
         _rigidbody = GetComponent<Rigidbody>();
+        if (TryGetComponent(out CapsuleCollider capsule)) _capsuleHalfHeight = capsule.height * transform.lossyScale.y / 2f;
         if (_input == null) _input = GetComponent<PlayerInputReader>();
         if (_cameraTransform == null && Camera.main != null) _cameraTransform = Camera.main.transform;
     }

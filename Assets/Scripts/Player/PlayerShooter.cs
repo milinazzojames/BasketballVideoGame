@@ -16,7 +16,11 @@ using UnityEngine;
 // You can only shoot while dribbling: pressing Shoot gathers the ball into the
 // hands (PlayerDribbler), and it's released from the release point when you let go.
 // With a body (PlayerBody), the meter also lifts the ball from the chest to the
-// set point above the forehead, and the ball leaves from the shooting hand.
+// set point above the forehead, and the player jumps so the top of the jump
+// comes at the middle of the green window: the arm pushes the ball from the set
+// point up to the release height (2.7 m, or 3.2 m for a layup), which is above
+// a 1.98 m player's standing reach. The ball leaves from the shooting hand,
+// wherever it is when you let go: release early and it's lower and on the way up.
 // Later idea (not built yet): a green shot nobody touches is guaranteed to go in.
 [DefaultExecutionOrder(-10)]   // carries the held ball before the dribbler moves it this step
 public class PlayerShooter : MonoBehaviour
@@ -28,8 +32,10 @@ public class PlayerShooter : MonoBehaviour
     [SerializeField] private Transform _rim;
     [Tooltip("The backboard, used for bank shots.")]
     [SerializeField] private Transform _backboard;
-    [Tooltip("The player's body. With one, the shot is lifted into the set point and leaves from the shooting hand. Optional.")]
+    [Tooltip("The player's body. With one, the shot is lifted into the set point, the player jumps, and the ball leaves from the shooting hand. Optional.")]
     [SerializeField] private PlayerBody _body;
+    [Tooltip("Makes the player jump on a shot. Uses the one on this object if empty.")]
+    [SerializeField] private PlayerMovement _movement;
 
     [Header("Shot motion (with a body)")]
     [Tooltip("Shoot with the right hand (off = left hand).")]
@@ -43,10 +49,20 @@ public class PlayerShooter : MonoBehaviour
     [Tooltip("Meter fill (0-1) at which the ball reaches the set point. Before that, it rises from the chest.")]
     [SerializeField, Range(0.05f, 1f)] private float _liftEndFill = 0.6f;
 
+    [Header("Jump (with a body)")]
+    [Tooltip("The jump is as high as it needs to be for the hand to get the ball to the release point, up to this many meters.")]
+    [SerializeField] private float _maxJumpHeight = 0.8f;
+    [Tooltip("Jump shots: how far the arm is stretched at the release, as a fraction of its full reach (shoulder to the ball's center). Below 1, the elbow keeps a little bend.")]
+    [SerializeField, Range(0.5f, 1f)] private float _jumpShotArmExtension = 0.95f;
+    [Tooltip("Layups: the same, for layups. 1 = arm fully stretched up.")]
+    [SerializeField, Range(0.5f, 1f)] private float _layupArmExtension = 1f;
+    [Tooltip("The arm pushes the ball from the set point to the release point over at least this many seconds before the top of the jump (more if the jump takes longer to rise).")]
+    [SerializeField] private float _minExtendTime = 0.2f;
+
     [Header("Release")]
-    [Tooltip("Height of the ball's center at release, in meters. A 6'6\" player's set shot releases around 2.6-2.8 m. One value for everyone for now; it'll become per-player later.")]
+    [Tooltip("Height of the ball's center at release, in meters. A 6'6\" player's set shot releases around 2.6-2.8 m. One value for everyone for now; it'll become per-player later. With a body, it's where the arm takes the ball at the top of the jump.")]
     [SerializeField] private float _releaseHeight = 2.7f;
-    [Tooltip("How far in front of the player's center the ball is released, in meters.")]
+    [Tooltip("How far in front of the player's center the ball is released, in meters. With a body, it's where the arm takes the ball at the top of the jump.")]
     [SerializeField] private float _releaseForward = 0.3f;
 
     [Header("Arc (launch angle above horizontal, in degrees)")]
@@ -113,6 +129,16 @@ public class PlayerShooter : MonoBehaviour
 
     private float _holdStartTime;
 
+    // The jump for the shot being charged.
+    private bool _chargingLayup;
+    private float _jumpHeight;
+    private float _jumpSpeed;
+    private float _takeoffTime;
+    private float _peakTime;
+    private float _extendStartTime;
+    private float _groundSolesHeight;
+    private bool _jumped;
+
     // Read by the shot meter display.
     public bool IsCharging { get; private set; }
     public float MeterFill => IsCharging ? Mathf.Clamp01((Time.time - _holdStartTime) / _meterFillTime) : LastReleaseFill;
@@ -132,6 +158,7 @@ public class PlayerShooter : MonoBehaviour
     {
         if (_input == null) _input = GetComponent<PlayerInputReader>();
         if (_dribbler == null) _dribbler = GetComponent<PlayerDribbler>();
+        if (_movement == null) _movement = GetComponent<PlayerMovement>();
     }
 
     private void OnEnable()
@@ -152,13 +179,28 @@ public class PlayerShooter : MonoBehaviour
         if (IsCharging && MeterFill >= 1f) Release();
     }
 
-    // While charging, the ball rises with the meter from the chest to the set point.
+    // While charging: the ball rises with the meter from the chest to the set
+    // point, the player jumps, and the arm pushes the ball up to the release
+    // point by the top of the jump.
     private void FixedUpdate()
     {
-        if (!IsCharging || _body == null) return;
+        if (!IsCharging || _body == null || _rim == null) return;
+
+        if (!_jumped && Time.time >= _takeoffTime)
+        {
+            _jumped = true;
+            if (_jumpHeight > 0.01f && _movement != null) _movement.Jump(_jumpSpeed);
+        }
 
         float lift = Mathf.SmoothStep(0f, 1f, MeterFill / _liftEndFill);
-        _dribbler.CarryHeldBall(Vector3.Lerp(_dribbler.GetHoldPoint(), GetSetPoint(), lift));
+        Vector3 point = Vector3.Lerp(_dribbler.GetHoldPoint(), GetSetPoint(), lift);
+
+        float extend = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(_extendStartTime, _peakTime, Time.time));
+        float belowPeak = _groundSolesHeight + _jumpHeight - _body.SolesHeight;
+        point = Vector3.Lerp(point, GetReleaseAim(belowPeak), extend);
+
+        // Never farther than the hand can hold it.
+        _dribbler.CarryHeldBall(_body.ClampToReach(ShootingSide, point, _ball.Radius));
     }
 
     // Above the forehead, a little in front and toward the shooting hand.
@@ -174,7 +216,18 @@ public class PlayerShooter : MonoBehaviour
     private Vector3 GetHandRelease()
     {
         _body.GetPalm(ShootingSide, out Vector3 palm, out Vector3 palmFacing);
-        return palm + palmFacing * _ball.Radius;
+        return KeepInFrontOfBoard(palm + palmFacing * _ball.Radius);
+    }
+
+    // From under the rim, the hand can be under or behind the backboard; the
+    // ball has to start in front of it (the same limit layups use).
+    private Vector3 KeepInFrontOfBoard(Vector3 release)
+    {
+        if (_backboard == null || _rim == null) return release;
+        Vector3 boardNormal = Flatten(-_backboard.forward);   // points from the board toward the court
+        float inFront = Vector3.Dot(release - _rim.position, boardNormal);
+        if (inFront < _layupMinInFrontOfRim) release += boardNormal * (_layupMinInFrontOfRim - inFront);
+        return release;
     }
 
     private void StartCharging()
@@ -190,6 +243,51 @@ public class PlayerShooter : MonoBehaviour
         float width = _greenWidthByDistance.Evaluate(GetDistanceToRim());
         GreenStart = Mathf.Clamp01(_greenCenter - width / 2f);
         GreenEnd = Mathf.Clamp01(_greenCenter + width / 2f);
+
+        if (_body != null && _ball != null && _rim != null) PlanJump();
+    }
+
+    // Works out how high to jump and when to leave the floor, so the top of
+    // the jump comes at the middle of the green window, with the shooting
+    // hand able to reach the release point there.
+    private void PlanJump()
+    {
+        _chargingLayup = GetDistanceToRim() <= _layupRange;
+        _groundSolesHeight = _body.SolesHeight;
+        _jumped = false;
+
+        // Standing, with the arm raised (which lifts the shoulder), how high can
+        // the hand get the ball at the release point's distance along the floor?
+        // Pythagoras: the arm's reach is the long side, the floor distance one short side.
+        Vector3 aim = GetReleaseAim(0f);
+        Vector3 shoulder = _body.GetShoulder(ShootingSide);
+        Vector3 flat = aim - shoulder;
+        flat.y = 0f;
+        float extension = _chargingLayup ? _layupArmExtension : _jumpShotArmExtension;
+        float reach = (_body.ArmReach + _ball.Radius) * extension;
+        float shoulderHeight = _groundSolesHeight + _body.StandingShoulderHeight + _body.ShoulderLiftOverhead;
+        float standingBallHeight = shoulderHeight + Mathf.Sqrt(Mathf.Max(0f, reach * reach - flat.sqrMagnitude));
+        _jumpHeight = Mathf.Clamp(aim.y - standingBallHeight, 0f, _maxJumpHeight);
+
+        // Jumping h meters high takes an up speed of sqrt(2 * g * h), and reaches
+        // the top after (up speed / g) seconds.
+        float gravity = -Physics.gravity.y;
+        _jumpSpeed = Mathf.Sqrt(2f * gravity * _jumpHeight);
+        _peakTime = _holdStartTime + _greenCenter * _meterFillTime;
+        _takeoffTime = _peakTime - _jumpSpeed / gravity;
+        _extendStartTime = Mathf.Min(_takeoffTime, _peakTime - _minExtendTime);
+    }
+
+    // Where the arm takes the ball at the top of the jump (the old fixed release
+    // point), lowered by however far the body is below the top of the jump.
+    // heightBelowPeak = how far the soles are below where they'll be at the top.
+    private Vector3 GetReleaseAim(float heightBelowPeak)
+    {
+        Vector3 rimToPlayer = transform.position - _rim.position;
+        rimToPlayer.y = 0f;
+        Vector3 aim = _chargingLayup ? GetLayupRelease(rimToPlayer) : GetJumpShotRelease(rimToPlayer);
+        aim.y -= heightBelowPeak;
+        return aim;
     }
 
     private void Release()
