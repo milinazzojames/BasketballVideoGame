@@ -3,7 +3,8 @@ using UnityEngine;
 // Dribbling. The ball stays a real physics object the whole time: the hand
 // pushes it down, the floor bounces it back up, and when it comes back up to
 // the hand it gets pushed down again. While it bounces, it's steered sideways
-// so it stays at the side of the hand that has it (a stand-in for the hand guiding it).
+// so it's back under the hand that has it by the time it bounces or comes up
+// (a stand-in for the hand guiding it), however quickly the player cuts and turns.
 //   - walk up to a loose ball to pick it up (no rebounding yet, just a grab radius)
 //   - sprinting (R2) dribbles lower and harder, so the bounces come faster
 //   - standing still (left stick centered) is a low, hard pound dribble
@@ -18,10 +19,13 @@ using UnityEngine;
 //       flick forward or toward the ball's side  = hesitation (same hand, quick slowdown)
 //       roll the stick through a half circle     = spin move (body spins, ends in the other hand)
 //   - if the ball gets knocked too far away (say it hits the pole), the dribble is lost
-// Moves take a moment. Flicking again before the ball reaches the new hand, or a
-// move that can't get the ball to the new hand (say, while turning hard at full
-// speed), fumbles the handle: the hand stops guiding the ball, and unless it comes
-// back up near the hand, it rolls away and the dribble is lost.
+// Moves take a moment. A flick while a move is still on its way is queued and
+// starts when the ball reaches the new hand (a combo).
+// Fumbles are optional (_allowFumbles, off by default): with them on, a flick too
+// soon, a move that can't get the ball to the new hand, or a ball that comes up
+// out of the arm's reach fumbles the handle: the hand stops guiding the ball, and
+// unless it comes back up near the hand, it rolls away and the dribble is lost.
+// Either way, a ball knocked far away (say, off the pole) is lost.
 // PlayerShooter calls Gather() to pick the ball up into both hands for a shot,
 // and LetGo() when the shot leaves the hands.
 [RequireComponent(typeof(Rigidbody))]
@@ -56,10 +60,8 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _sideOffset = 0.6f;
     [Tooltip("How far in front of the player's center the ball bounces, in meters.")]
     [SerializeField] private float _forwardOffset = 0.25f;
-    [Tooltip("How strongly the ball is steered back under the hand, per second. Higher = tighter handle, lower = looser dribble.")]
-    [SerializeField] private float _steering = 10f;
-    [Tooltip("Largest steering correction, in m/s on top of the player's own speed.")]
-    [SerializeField] private float _maxSteeringSpeed = 3f;
+    [Tooltip("Largest sideways speed the hand gives the ball to get it back under the hand, in m/s on top of the player's own speed. High enough that the ball keeps up through hard cuts and turns.")]
+    [SerializeField] private float _maxGuideSpeed = 8f;
     [Tooltip("If the ball ends up this far from the player's center (meters, along the floor), the dribble is lost.")]
     [SerializeField] private float _loseDistance = 1.5f;
 
@@ -124,13 +126,15 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _flickMaxTurn = 60f;
     [Tooltip("Largest speed the hand can give the ball during a move, in m/s on top of the player's own speed. A move that needs more can't get the ball to the other hand in time.")]
     [SerializeField] private float _maxMoveSpeed = 6f;
-    [Tooltip("At the end of a move, the ball has to come up within this distance of the new hand (meters, along the floor), or the handle is fumbled.")]
+    [Tooltip("At the end of a move, the ball has to come up within this distance of the new hand (meters, along the floor), or (with fumbles on) the handle is fumbled. Also how close a fumbled ball has to come back to be caught.")]
     [SerializeField] private float _catchRadius = 0.3f;
-    [Tooltip("A move that hasn't reached the new hand after this many seconds (say, the ball stopped bouncing) is fumbled.")]
+    [Tooltip("A move that hasn't reached the new hand after this many seconds (say, the ball stopped bouncing) ends; with fumbles on, it's fumbled.")]
     [SerializeField] private float _maxMoveTime = 1.5f;
+    [Tooltip("Off: the hand never loses the ball by itself. A move that misses the new hand is caught on the next bounce, a move that takes too long just ends, and the arm's reach isn't checked. On: those mistakes fumble the ball. A ball knocked past the lose distance is lost either way.")]
+    [SerializeField] private bool _allowFumbles = false;
     [Tooltip("Seconds a fumbled ball can still be caught again, if it comes back up near the hand. After that (or once it's past the lose distance) the dribble is lost.")]
     [SerializeField] private float _fumbleTime = 1f;
-    [Tooltip("With a body: when the ball comes up to the hand, its center has to be within the arm's reach (shoulder to palm) plus the ball's radius plus this much, in meters, or the hand can't push it and it's fumbled. Covers the leaning and reaching the primitive body doesn't do.")]
+    [Tooltip("With a body: when the ball comes up to the hand, its center has to be within the arm's reach (shoulder to palm) plus the ball's radius plus this much, in meters, or (with fumbles on) the hand can't push it and it's fumbled. Covers the leaning and reaching the primitive body doesn't do.")]
     [SerializeField] private float _reachSlack = 0.1f;
 
     [Header("Picking up a loose ball")]
@@ -318,7 +322,8 @@ public class PlayerDribbler : MonoBehaviour
             {
                 Vector3 catchPoint = MoveCatchPoint();
                 _move = Move.None;
-                if (FlatDistance(ballPosition, catchPoint) > _catchRadius)
+                // Without fumbles, a miss is just guided back to the hand on the next bounce.
+                if (_allowFumbles && FlatDistance(ballPosition, catchPoint) > _catchRadius)
                 {
                     Fumble("Fumbled the move: the ball didn't come up to the hand.");
                     return;
@@ -328,7 +333,7 @@ public class PlayerDribbler : MonoBehaviour
             // The hand is on the end of an arm: if the ball comes up too far
             // from the shoulder (say, it drifted out while turning hard at full
             // speed), the hand can't get on top of it to push it.
-            if (!IsWithinReach(ballPosition))
+            if (_allowFumbles && !IsWithinReach(ballPosition))
             {
                 Fumble("Fumbled: the ball came up out of the hand's reach.");
                 return;
@@ -360,26 +365,37 @@ public class PlayerDribbler : MonoBehaviour
         // A move that never finishes (say, the ball stopped bouncing) is a fumble.
         if (_move != Move.None && Time.time - _moveStartTime > _maxMoveTime)
         {
-            Fumble("Fumbled the move: it took too long.");
-            return;
+            if (_allowFumbles)
+            {
+                Fumble("Fumbled the move: it took too long.");
+                return;
+            }
+            _move = Move.None;
         }
 
         // Sideways: the ball moves with the player, plus a correction toward
         // where the hand wants it. Clamping the correction keeps it from snapping.
         Vector3 playerVelocity = _body.linearVelocity;
         playerVelocity.y = 0f;
-        Vector3 correction = _move == Move.None ? SteerToHand(ballPosition) : SteerMove(ballPosition, vertical, handHeight);
+        Vector3 correction = _move == Move.None ? SteerToHand(ballPosition, vertical, handHeight) : SteerMove(ballPosition, vertical, handHeight);
         Vector3 horizontal = playerVelocity + correction;
 
         _ball.Body.linearVelocity = new Vector3(horizontal.x, vertical, horizontal.z);
     }
 
-    // Normal dribble: pulled back under the hand, harder the farther it is.
-    private Vector3 SteerToHand(Vector3 ballPosition)
+    // Normal dribble: the hand sends the ball back under it in time: by the
+    // bounce on the way down, by the hand height on the way up. When the player
+    // turns or cuts, the hand swings around the body, and the ball has to get
+    // there before it comes back up. (A gentle pull that ignored the time left
+    // let the ball come up out of reach on hard turns, and it was fumbled.)
+    private Vector3 SteerToHand(Vector3 ballPosition, float vertical, float handHeight)
     {
         Vector3 toHand = HandPoint() - ballPosition;
         toHand.y = 0f;
-        return Vector3.ClampMagnitude(toHand * _steering, _maxSteeringSpeed);
+        float time = vertical > 0f
+            ? TimeToRiseTo(handHeight - ballPosition.y, vertical)
+            : TimeToFall(ballPosition.y - _ball.Radius, -vertical);
+        return Vector3.ClampMagnitude(toHand / Mathf.Max(time, 0.05f), _maxGuideSpeed);
     }
 
     // During a move the hand sends the ball to a target in time: first the spot
@@ -482,8 +498,10 @@ public class PlayerDribbler : MonoBehaviour
 
     private void OnMoveInput(Move move)
     {
-        // Too quick: a new move while the last one is still on its way.
-        if (_move != Move.None)
+        // A new move while the last one is still on its way: with fumbles on,
+        // that's too quick. Otherwise it waits and starts when the ball reaches
+        // the new hand (or is dropped after the move buffer time).
+        if (_move != Move.None && _allowFumbles)
         {
             Fumble("Fumbled: moves too quick.");
             return;
