@@ -22,11 +22,6 @@ public class PlayerMovement : MonoBehaviour
     private float _spinDegreesLeft;
     private float _spinSpeed;
 
-    // Current speed along the floor in m/s (for the debug overlay later).
-    public float CurrentSpeed { get; private set; }
-    // True while braking hard for a sharp cut or reversal (for the debug overlay later).
-    public bool IsPlanting { get; private set; }
-
     // Caps the top speed at this fraction (0-1) for a moment, like a hesitation
     // dribble. Speeding back up afterwards uses the normal acceleration.
     public void SlowDown(float speedMultiplier, float seconds)
@@ -95,7 +90,6 @@ public class PlayerMovement : MonoBehaviour
         // which feels like ice.
         float speed = floorVelocity.magnitude;
         Vector3 direction = speed > 0.05f ? floorVelocity / speed : stickDirection;
-        IsPlanting = false;
 
         if (!stickPushed)
         {
@@ -119,7 +113,6 @@ public class PlayerMovement : MonoBehaviour
                 // Hard cut or reversal: plant and brake hard along the old line,
                 // then push off the new way once slow (next branch), instead of
                 // running a wide arc.
-                IsPlanting = true;
                 speed = Mathf.MoveTowards(speed, 0f, _config.PlantDeceleration * dt);
             }
             else
@@ -142,7 +135,6 @@ public class PlayerMovement : MonoBehaviour
 
         floorVelocity = direction * speed;
         _rigidbody.linearVelocity = new Vector3(floorVelocity.x, velocity.y, floorVelocity.z);
-        CurrentSpeed = speed;
 
         // A spin turns the body at its own speed until it's done.
         if (_spinDegreesLeft != 0f)

@@ -10,12 +10,18 @@ using UnityEngine;
 // This is purely visual; HoopNet handles slowing the ball down.
 public class NetSway : MonoBehaviour
 {
-    [Header("Shape (meters)")]
+    [Header("Shape (meters; set by the scene builder)")]
+    [Tooltip("How far the net hangs below the rim.")]
     [SerializeField] private float _length = 0.45f;
+    [Tooltip("Radius where the net is tied to the rim (the rim rod's centerline).")]
     [SerializeField] private float _topRadius = 0.2365f;
+    [Tooltip("Radius at the bottom. Smaller than the top, so the net tapers and even a swish brushes it.")]
     [SerializeField] private float _bottomRadius = 0.13f;
+    [Tooltip("Knots around the rim.")]
     [SerializeField] private int _columns = 12;
+    [Tooltip("Rows of diamonds from the rim to the bottom.")]
     [SerializeField] private int _rows = 4;
+    [Tooltip("Thickness of the drawn strands. Also how close a ball gets to a knot before pushing it.")]
     [SerializeField] private float _strandWidth = 0.008f;
     [SerializeField] private Material _material;
 

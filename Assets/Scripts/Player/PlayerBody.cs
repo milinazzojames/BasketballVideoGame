@@ -161,14 +161,17 @@ public class PlayerBody : MonoBehaviour
     private float ArmLength => _upperArmLength + _lowerArmLength;
 
     // Shoulder to the middle of the palm, with the arm straight.
-    public float ArmReach => _upperArmLength + _lowerArmLength + _handLength / 2f;
+    public float ArmReach => ArmLength + _handLength / 2f;
     // Height of the shoulders above the soles, standing (with the small knee bend).
     public float StandingShoulderHeight => _shoulderHeight - _kneeBend;
     public float ShoulderLiftOverhead => _shoulderLiftOverhead;
-    public float HandThickness => _handSize.y;
     public float MaxCrouch => _maxCrouch;
     // Height of the soles (the bottom of the capsule) after this physics step.
     public float SolesHeight => PredictedRootPosition.y - _capsuleHalfHeight;
+    // Where the capsule will be at the end of this physics step. The body is
+    // posed there (and the shoulder and head positions use it), so the body
+    // isn't a step behind the capsule.
+    public Vector3 PredictedRootPosition => _rigidbody.position + _rigidbody.linearVelocity * Time.fixedDeltaTime;
 
     private static int SideIndex(int side) => side > 0 ? 1 : 0;
 
@@ -239,9 +242,7 @@ public class PlayerBody : MonoBehaviour
         Vector3 up = rotation * Vector3.up;
         Vector3 right = rotation * Vector3.right;
         Vector3 forward = rotation * Vector3.forward;
-        Vector3 shoulder = GetShoulder(side);
-        Vector3 wrist = shoulder - up * (ArmLength * _relaxedArmStraightness)
-            + right * (side * _relaxedHandOut) + forward * _relaxedHandForward;
+        Vector3 wrist = RelaxedWrist(GetShoulder(side), side, up, right, forward);
 
         // Running: the arm swings opposite its own leg (forward with the other
         // leg), and the hand comes up so the elbow bends, more the faster we go.
@@ -254,7 +255,19 @@ public class PlayerBody : MonoBehaviour
         fingerDirection = -up;
         palmDirection = -right * side;
         palmPoint = PalmFromWrist(wrist, HandRotation(fingerDirection, palmDirection));
-        elbowHint = rotation * Vector3.Scale(_relaxedElbowHint, new Vector3(side, 1f, 1f));
+        elbowHint = RelaxedElbowHint(rotation, side);
+    }
+
+    // A relaxed arm's wrist: hanging down, a little out to the side and forward.
+    private Vector3 RelaxedWrist(Vector3 shoulder, int side, Vector3 up, Vector3 right, Vector3 forward)
+    {
+        return shoulder - up * (ArmLength * _relaxedArmStraightness)
+            + right * (side * _relaxedHandOut) + forward * _relaxedHandForward;
+    }
+
+    private Vector3 RelaxedElbowHint(Quaternion rotation, int side)
+    {
+        return rotation * Vector3.Scale(_relaxedElbowHint, new Vector3(side, 1f, 1f));
     }
 
     // The hips joint (relative to the capsule's center) and the upper body's
@@ -309,11 +322,6 @@ public class PlayerBody : MonoBehaviour
         _hasHandTarget[0] = false;
         _hasHandTarget[1] = false;
     }
-
-    // Where the capsule will be at the end of this physics step. The body is
-    // posed there (and the shoulder and head positions above use it), so the
-    // body isn't a step behind the capsule.
-    public Vector3 PredictedRootPosition => _rigidbody.position + _rigidbody.linearVelocity * Time.fixedDeltaTime;
 
     // While the player has the ball, it passes through all of their body parts
     // (like it passes through the capsule). When it's loose again, each part
@@ -414,13 +422,11 @@ public class PlayerBody : MonoBehaviour
             }
             else
             {
-                // Relaxed: hanging down, a little out to the side and forward,
-                // fingers down and the palm facing the leg.
-                Vector3 wristRelaxed = shoulder - up * (ArmLength * _relaxedArmStraightness)
-                    + right * (side * _relaxedHandOut) + forward * _relaxedHandForward;
+                // No PlayerArms (or in the editor): hang relaxed, fingers down and
+                // the palm facing the leg.
                 handRotation = HandRotation(-up, -right * side);
-                palm = PalmFromWrist(wristRelaxed, handRotation);
-                elbowHint = rootRotation * Vector3.Scale(_relaxedElbowHint, new Vector3(side, 1f, 1f));
+                palm = PalmFromWrist(RelaxedWrist(shoulder, side, up, right, forward), handRotation);
+                elbowHint = RelaxedElbowHint(rootRotation, side);
             }
 
             // A raised arm lifts its shoulder (more the closer to straight up it points).
