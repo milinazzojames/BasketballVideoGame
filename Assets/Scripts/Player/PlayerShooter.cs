@@ -346,7 +346,15 @@ public class PlayerShooter : MonoBehaviour
         Vector3 aimPoint = bank ? GetBankTarget(target) : target;
 
         float launchAngle = layup ? PickLayupAngle(bank) : PickLaunchAngle(distance);
-        if (!ShotMath.TryGetLaunchVelocity(release, aimPoint, launchAngle, out Vector3 velocity)) return;
+        // A release from the hand can be low or high (early or late, mid-jump),
+        // and a flat angle can't reach a target well above the release. Then
+        // the shot goes up steeper instead, so it always heads for the hoop.
+        Vector3 velocity;
+        while (!ShotMath.TryGetLaunchVelocity(release, aimPoint, launchAngle, out velocity))
+        {
+            launchAngle += 5f;
+            if (launchAngle >= 89f) return;
+        }
 
         LastLaunchAngle = launchAngle;
         _ball.Place(release);
