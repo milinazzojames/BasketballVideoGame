@@ -16,7 +16,8 @@ public static class TwoBoneIK
     // hint   = a direction the elbow or knee should point toward
     // middle = the elbow or knee (output)
     // end    = the wrist or ankle (output). It's the target, unless the target is
-    //          too far away (then the limb points straight at it, fully stretched).
+    //          out of reach: too far (the limb points straight at it, fully
+    //          stretched) or too close (fully folded).
     public static void Solve(Vector3 root, Vector3 target, Vector3 hint, float upperLength, float lowerLength,
         out Vector3 middle, out Vector3 end)
     {

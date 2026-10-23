@@ -21,7 +21,7 @@ using UnityEngine;
 // point up to the release height (2.7 m, or 3.2 m for a layup), which is above
 // a 1.98 m player's standing reach. The ball leaves from the shooting hand,
 // wherever it is when you let go: release early and it's lower and on the way up.
-// Later idea (not built yet): a green shot nobody touches is guaranteed to go in.
+// Planned (roadmap): a green shot nobody touches is guaranteed to go in.
 [DefaultExecutionOrder(-10)]   // carries the held ball before the dribbler moves it this step
 public class PlayerShooter : MonoBehaviour
 {
@@ -139,17 +139,15 @@ public class PlayerShooter : MonoBehaviour
     private float _groundSolesHeight;
     private bool _jumped;
 
-    // Read by the shot meter display.
+    // Read by the shot meter (ShotMeterDisplay) and the arms (PlayerArms).
     public bool IsCharging { get; private set; }
     public float MeterFill => IsCharging ? Mathf.Clamp01((Time.time - _holdStartTime) / _meterFillTime) : LastReleaseFill;
     public float LastReleaseFill { get; private set; }
     public float LastReleaseTime { get; private set; } = float.NegativeInfinity;
-    public bool LastReleaseWasGreen { get; private set; }
-    public float LastLaunchAngle { get; private set; }
     public float GreenStart { get; private set; }
     public float GreenEnd { get; private set; }
 
-    // Read by PlayerArms. +1 = right hand, -1 = left hand.
+    // +1 = right hand, -1 = left hand.
     public int ShootingSide => _shootRightHanded ? 1 : -1;
     // Flat direction from the player toward the rim.
     public Vector3 ShotDirection => _rim != null ? Flatten(_rim.position - transform.position) : transform.forward;
@@ -219,8 +217,9 @@ public class PlayerShooter : MonoBehaviour
         return KeepInFrontOfBoard(palm + palmFacing * _ball.Radius);
     }
 
-    // From under the rim, the hand can be under or behind the backboard; the
-    // ball has to start in front of it (the same limit layups use).
+    // From under or behind the rim, a release point (the hand, or a layup's
+    // release) can be under or behind the backboard; the ball has to start at
+    // least a little in front of the rim center instead.
     private Vector3 KeepInFrontOfBoard(Vector3 release)
     {
         if (_backboard == null || _rim == null) return release;
@@ -278,8 +277,8 @@ public class PlayerShooter : MonoBehaviour
         _extendStartTime = Mathf.Min(_takeoffTime, _peakTime - _minExtendTime);
     }
 
-    // Where the arm takes the ball at the top of the jump (the old fixed release
-    // point), lowered by however far the body is below the top of the jump.
+    // Where the arm takes the ball at the top of the jump, lowered by however far
+    // the body is below the top of the jump.
     // heightBelowPeak = how far the soles are below where they'll be at the top.
     private Vector3 GetReleaseAim(float heightBelowPeak)
     {
@@ -298,14 +297,14 @@ public class PlayerShooter : MonoBehaviour
         IsCharging = false;
         LastReleaseFill = fill;
         LastReleaseTime = Time.time;
-        LastReleaseWasGreen = fill >= GreenStart && fill <= GreenEnd;
+        bool green = fill >= GreenStart && fill <= GreenEnd;
 
         // How far outside the green the release was: negative = early, positive = late, 0 = green.
         float timingError = 0f;
         if (fill < GreenStart) timingError = fill - GreenStart;
         else if (fill > GreenEnd) timingError = fill - GreenEnd;
 
-        Shoot(LastReleaseWasGreen, timingError);
+        Shoot(green, timingError);
     }
 
     private void Shoot(bool green, float timingError)
@@ -356,7 +355,6 @@ public class PlayerShooter : MonoBehaviour
             if (launchAngle >= 89f) return;
         }
 
-        LastLaunchAngle = launchAngle;
         _ball.Place(release);
         _ball.Launch(velocity, ShotMath.GetBackspin(aimPoint - release, layup ? _layupBackspin : _backspin));
 
@@ -384,15 +382,9 @@ public class PlayerShooter : MonoBehaviour
     // A layup leaves the hand up high, a step in front of the player toward the rim.
     private Vector3 GetLayupRelease(Vector3 rimToPlayer)
     {
-        // From under or behind the rim, the ball would start under the backboard,
-        // so the release moves out in front of the rim. (A reverse layup off the
-        // glass can come later.)
-        if (_backboard != null)
-        {
-            Vector3 boardNormal = Flatten(-_backboard.forward);   // points from the board toward the court
-            float inFront = Vector3.Dot(rimToPlayer, boardNormal);
-            if (inFront < _layupMinInFrontOfRim) rimToPlayer += boardNormal * (_layupMinInFrontOfRim - inFront);
-        }
+        // From under or behind the rim, the release moves out in front of it.
+        // (A reverse layup off the glass can come later.)
+        rimToPlayer = KeepInFrontOfBoard(_rim.position + rimToPlayer) - _rim.position;
 
         float releaseDistance = Mathf.Max(rimToPlayer.magnitude - _layupReleaseForward, _layupMinReleaseDistance);
         Vector3 release = _rim.position + rimToPlayer.normalized * releaseDistance;

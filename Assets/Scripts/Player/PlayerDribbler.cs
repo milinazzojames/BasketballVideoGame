@@ -177,8 +177,6 @@ public class PlayerDribbler : MonoBehaviour
     private bool _hasCarryTarget;
     private Vector3 _carryTarget;
 
-    public bool HasBall => _state != State.Loose;
-    public bool IsBallInRightHand => _hand > 0;
     // Bouncing the ball (or trying to catch a fumbled one).
     public bool IsDribbling => _state == State.Dribbling || _state == State.Fumbling;
     // Holding the ball in both hands (gathered for a shot).
@@ -189,8 +187,6 @@ public class PlayerDribbler : MonoBehaviour
     // The hand touching the ball: during a move, until the ball bounces, it's
     // still the hand that pushed it; then it's the new hand.
     public int TouchHand => _move != Move.None && _move != Move.Hesitation && !_moveBounced ? -_hand : _hand;
-    // The height (ball center) the hand meets the ball at right now, in meters.
-    public float CurrentHandHeight => _currentHandHeight;
     // Where the held ball is being carried to this step.
     public Vector3 HeldBallTarget => _heldBallTarget;
 

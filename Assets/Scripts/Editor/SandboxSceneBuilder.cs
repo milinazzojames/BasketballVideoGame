@@ -531,9 +531,9 @@ public static class SandboxSceneBuilder
         Object.DestroyImmediate(line.GetComponent<Collider>());
     }
 
-    // Materials are saved as asset files; materials that only exist in memory
-    // wouldn't be saved with the scene.
-    // Unlit materials ignore lighting and show their exact color, which suits UI like the shot meter.
+    // Materials are saved as asset files (materials that only exist in memory
+    // wouldn't be saved with the scene), and their color is reset on every rebuild.
+    // Unlit materials ignore lighting and show their exact color, which suits the shot meter.
     private static Material GetMaterial(string name, Color color, bool unlit = false)
     {
         EnsureFolder(MaterialFolder);
