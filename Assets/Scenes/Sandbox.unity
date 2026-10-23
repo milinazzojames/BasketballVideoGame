@@ -5297,6 +5297,7 @@ MonoBehaviour:
   _pickupRadius: 0.9
   _pickupMaxHeight: 1.6
   _pickupDelayAfterShot: 1
+  _shotPassThroughTime: 0.5
   _holdForward: 0.35
   _holdHeight: 1.3
 --- !u!114 &844680177
@@ -8255,7 +8256,7 @@ MonoBehaviour:
   _followForward: 0.35
   _followSideways: 0.25
   _lookTowardFocus: 0.3
-  _smoothTime: 0.25
+  _smoothTime: 0.15
 --- !u!81 &1582874208
 AudioListener:
   m_ObjectHideFlags: 0

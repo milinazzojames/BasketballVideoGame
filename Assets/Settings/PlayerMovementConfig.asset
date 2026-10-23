@@ -15,6 +15,35 @@ MonoBehaviour:
   _runSpeed: 4.5
   _sprintSpeed: 7.5
   _stickResponse: 1.5
-  _acceleration: 12
-  _deceleration: 18
+  _minWalkSpeed: 0.6
+  _acceleration: 20
+  _deceleration: 28
+  _stopDeceleration: 35
+  _turnRateBySpeed:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 1080
+      inSlope: -680
+      outSlope: -680
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 400
+      inSlope: -680
+      outSlope: -680
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  _plantAngle: 120
+  _plantDeceleration: 40
+  _plantEndSpeed: 1
   _turnSpeed: 720

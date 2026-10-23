@@ -30,20 +30,56 @@ public class BehindPlayerCamera : MonoBehaviour
 
     [Header("Smoothing")]
     [Tooltip("Roughly how many seconds the camera takes to catch up. Lower = snappier, higher = floatier.")]
-    [SerializeField] private float _smoothTime = 0.25f;
+    [SerializeField] private float _smoothTime = 0.15f;
 
     private Vector3 _velocity;
     private Vector3 _restPoint;        // the player's starting spot; the camera is "at rest" when the player stands here
     private Vector3 _courtForward;     // flat direction from the court toward the hoop
     private Vector3 _courtRight;
 
+    // Flat directions of the court: toward the hoop, and to the right of that.
+    // They never change, unlike the camera's own facing, which drifts a little
+    // as it follows the player.
+    public Vector3 CourtForward => _courtForward;
+    public Vector3 CourtRight => _courtRight;
+
+    // Turns a stick (x = right, y = up) into a flat direction on the floor:
+    // up = toward the hoop. Uses the camera's court directions so holding the
+    // stick still gives a straight line; without a BehindPlayerCamera it falls
+    // back to the camera's facing. Not normalized: a half push stays half as long.
+    public static Vector3 StickToFloor(Vector2 stick, Transform cameraTransform)
+    {
+        Vector3 forward = Vector3.forward;
+        Vector3 right = Vector3.right;
+        if (cameraTransform != null)
+        {
+            if (cameraTransform.TryGetComponent(out BehindPlayerCamera court))
+            {
+                forward = court.CourtForward;
+                right = court.CourtRight;
+            }
+            else
+            {
+                forward = Flatten(cameraTransform.forward);
+                right = Flatten(cameraTransform.right);
+            }
+        }
+        return forward * stick.y + right * stick.x;
+    }
+
+    // The court directions are set in Awake so the player scripts can use them
+    // from their very first physics step.
+    private void Awake()
+    {
+        _courtForward = _focus != null ? Flatten(_focus.forward) : Vector3.forward;
+        _courtRight = Vector3.Cross(Vector3.up, _courtForward);
+    }
+
     private void Start()
     {
         if (_target == null) return;
 
         _restPoint = _target.position;
-        _courtForward = _focus != null ? Flatten(_focus.forward) : Vector3.forward;
-        _courtRight = Vector3.Cross(Vector3.up, _courtForward);
 
         // Snap into place on the first frame instead of gliding in from wherever the camera started.
         transform.position = GetDesiredPosition();

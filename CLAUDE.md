@@ -17,12 +17,13 @@ In scope now:
 - Dribbling, shooting, and (later) passing as mechanics
 - Tuning values exposed in the Inspector or ScriptableObjects so they can be adjusted while playtesting
 - A **primitive human body** built from code (capsules, spheres, boxes; decided by Jimmy 2026-10-22), with **procedural poses**: arms reaching for the ball with simple IK, a stand/run leg pose, a jump on shots. Today's dribble and shot physics stay in charge; the body follows them.
+- **Planned next (Jimmy, 2026-10-23), built in this order:** tighter movement; shooting and scoring (shots that go in when they should, a visible jump on every shot, a real 3-point line, made baskets and points); defense basics; then **1v1 against the computer, half court, first to 21 with 2s and 3s**. Scoring rules and a computer opponent are in scope for that path only.
 
 Out of scope until Jimmy says otherwise:
 - Visual polish, models, materials, lighting, VFX
 - Keyframed character animation and imported models (MakeHuman, Mixamo); the primitive body is the stand-in
 - UI beyond a simple debug overlay, menus, audio
-- Rosters, game modes, AI teammates/opponents, scoring rules, online play
+- Rosters, other game modes, AI teammates, online play (the 1v1 computer opponent and its scoring above are the exception)
 
 If a task tempts you toward out-of-scope work, stop and ask first.
 
@@ -105,13 +106,14 @@ If a task tempts you toward out-of-scope work, stop and ask first.
 
 ## Roadmap (controls and physics first)
 
-Each step is meant to be one or a few small PRs. Check off as they land.
+Each step is meant to be one or a few small PRs. Check off as they land. Passing (step 9) and the double dribble rule are moved to after 1v1.
 
 0. [x] Repo setup: Unity `.gitignore`, `.gitattributes` for LFS, this `CLAUDE.md`
 1. [x] Create the Unity project (Universal 3D) and install the Input System package
 2. [x] Sandbox scene: flat floor, one hoop (rim, backboard, pole) at real dimensions, simple camera
 3. [x] Input Actions asset with the starter layout (Move and Sprint wired up first)
 4. [x] Player movement: capsule moves with the left stick, analog speed, acceleration/deceleration, sprint on R2
+   - [ ] Tighter movement: court-relative stick, speed and direction handled separately, plant on hard cuts, quick stops, body faces the way it moves
 5. [x] Ball physics: a ball that bounces and rolls realistically and collides correctly with rim and backboard
    - [x] Invisible walls around the floor and a safety reset, so the ball never falls off the world (real out-of-bounds rules replace them during games later)
 6. [x] Dribbling: ball attached to the player with a simple dribble loop, then right-stick dribble moves
@@ -121,9 +123,14 @@ Each step is meant to be one or a few small PRs. Check off as they land.
 7. [x] Shooting: hold-and-release Square, shot meter/timing, a computed arc toward the rim with a make/miss window
    - [x] Layups inside 1.8 m: higher release, steeper arc, off the glass except straight on or along the baseline (dunks wait for animation)
    - [x] Green window sized by distance (wide up close, narrow from deep); moving and contested shots come later
+   - [ ] Court markings (3-point line, corners, paint) and `CourtGeometry` (2 or 3 from a floor point)
+   - [ ] Made baskets and points (`ScoreKeeper`), plus a Shot Lab that measures make rates
+   - [ ] A visible jump on every shot (minimum jump heights, dip before takeoff, limited air control)
+   - [ ] Shots go in when they should: guaranteed uncontested greens, aim and miss-size tuning against the Shot Lab
 8. [ ] Debug overlay: show speed, shot timing, release quality, and let values be tweaked live
-9. [ ] Passing to a static target
-10. [ ] Defense basics: stance/slide, hands up, steal attempt (against a dummy)
+9. [ ] Passing to a static target (after 1v1)
+10. [ ] Defense basics: stance/slide, hands up, steal attempt (against a dummy); input behind an `IPlayerInput` interface so the computer can drive the same scripts; contested shots
+11. [ ] 1v1 against the computer (plan PR first): game flow to 21 with 2s and 3s, clear the ball, out of bounds, computer defender, computer offense, double dribble
 
 Human body (a primitive stand-in until the MakeHuman model in the art pipeline below):
 
@@ -131,13 +138,13 @@ Human body (a primitive stand-in until the MakeHuman model in the art pipeline b
 - [x] Arms reach for the ball with two-bone IK (`PlayerArms`, `TwoBoneIK`): hand on the ball while dribbling, guard arm, two hands holding, lift to the set point, follow-through; the ball has to come up within the arm's reach or it's fumbled
 - [x] Shot jump: a real Rigidbody jump timed so the top of the jump is the middle of the green window; the arm takes the ball to the 2.7 m (layup 3.2 m) release point and the ball leaves from the shooting hand
 
-After this, revisit the plan: 1v1, animation, visuals, and game logic.
+After 1v1, revisit the plan: animation, visuals, and more game logic.
 
 ## Decisions for later (approved, not started)
 
 Animation and visuals are still out of scope until Jimmy says otherwise. When they come in, this is the plan:
 
-- **Shooting stays purely physics-based for now.** Later idea: a green shot nobody touches is guaranteed to go in (e.g. move the ball kinematically along the exact arc until it's below the rim, then hand it back to physics with the matching velocity).
+- **Shooting stays physics-based.** A green shot nobody touches is guaranteed to go in (move the ball kinematically along the exact arc until it's below the rim, then hand it back to physics with the matching velocity); scheduled in the "shots go in" step above.
 - **Budget:** keep the project free wherever possible. Paid assets are only a fallback.
 - **Look:** humans based on realism (realistic proportions and motion), not photoreal.
 - **Art pipeline:**

@@ -36,7 +36,7 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private Basketball _ball;
     [Tooltip("The player's body. While the player has the ball, it passes through every body part, like it passes through the capsule. The ball also has to come up within the arm's reach to be pushed. Optional.")]
     [SerializeField] private PlayerBody _playerBody;
-    [Tooltip("Right-stick flicks are read relative to this camera, like the left stick. Uses the main camera if empty.")]
+    [Tooltip("Right-stick flicks are read relative to this camera's court directions (up = toward the hoop), like the left stick. Uses the main camera if empty.")]
     [SerializeField] private Transform _cameraTransform;
 
     [Header("Dribble (heights are the ball's center, in meters)")]
@@ -667,15 +667,12 @@ public class PlayerDribbler : MonoBehaviour
         return point;
     }
 
-    // The right stick, turned from camera directions into the player's own
-    // directions (x = player's right, y = player's forward).
+    // The right stick, turned from court directions (up = toward the hoop, like
+    // the left stick) into the player's own directions (x = player's right,
+    // y = player's forward).
     private Vector2 StickToPlayerFrame(Vector2 stick)
     {
-        Vector3 forward = _cameraTransform != null ? _cameraTransform.forward : Vector3.forward;
-        Vector3 right = _cameraTransform != null ? _cameraTransform.right : Vector3.right;
-        forward.y = 0f;
-        right.y = 0f;
-        Vector3 world = forward.normalized * stick.y + right.normalized * stick.x;
+        Vector3 world = BehindPlayerCamera.StickToFloor(stick, _cameraTransform);
         Vector3 local = Quaternion.Inverse(_body.rotation) * world;
         return new Vector2(local.x, local.z).normalized;
     }
