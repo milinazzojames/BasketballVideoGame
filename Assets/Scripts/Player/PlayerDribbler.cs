@@ -92,6 +92,8 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _flickTime = 0.15f;
     [Tooltip("A move starts when the ball comes up to the hand. A flick waits this many seconds for that (a walking dribble takes about 0.5 s), then it's dropped.")]
     [SerializeField] private float _moveBufferTime = 0.6f;
+    [Tooltip("A flick also starts its move right away while the ball is still on its way down from the hand above this height (meters, ball center), since the hand rides on top of it until about knee height. Lower = moves start sooner after a flick; above the hand height = always wait for the ball to come back up.")]
+    [SerializeField] private float _moveStartMinHeight = 0.7f;
     [Tooltip("A fumbled ball can be caught again when it's within this distance below the hand height, in meters (and within the catch radius).")]
     [SerializeField] private float _handReach = 0.3f;
     [Tooltip("How fast the hand pushes the ball down to start a move, in m/s. Softer than a pound dribble, so the ball has time to get across: a 1.2 m crossover takes about 0.4 s at 3.5. Below about 3, it won't come back up to a walking hand height.")]
@@ -341,6 +343,13 @@ public class PlayerDribbler : MonoBehaviour
             vertical = _pendingMove != Move.None ? StartMove() : -pushSpeed;
             // A real hand also stops the ball spinning from its last floor contact.
             _ball.Body.angularVelocity = Vector3.zero;
+        }
+        else if (_pendingMove != Move.None && _move == Move.None && vertical <= 0f && ballPosition.y >= _moveStartMinHeight)
+        {
+            // Flicked while the ball is still under the hand on its way down: the
+            // hand redirects it now instead of waiting a whole bounce. It keeps
+            // whichever is faster, its current speed down or the move's push.
+            vertical = Mathf.Min(vertical, StartMove());
         }
         else if (ballPosition.y < _ball.Radius + 0.02f && Mathf.Abs(vertical) < 0.2f)
         {

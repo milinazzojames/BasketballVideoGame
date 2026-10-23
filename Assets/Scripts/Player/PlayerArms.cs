@@ -23,7 +23,7 @@ public class PlayerArms : MonoBehaviour
     [SerializeField] private Basketball _ball;
 
     [Header("Hand speed")]
-    [Tooltip("How fast a hand moves to a new spot, in m/s (from the side to the ball, to a guard pose...).")]
+    [Tooltip("How fast a hand moves to a new spot relative to the body, in m/s (from the side to the ball, to a guard pose...). Running carries the hands along on top of this.")]
     [SerializeField] private float _handSpeed = 6f;
     [Tooltip("How fast a hand follows the ball it's touching, in m/s. Faster than the ball ever moves, so the hand stays on it.")]
     [SerializeField] private float _onBallHandSpeed = 30f;
@@ -58,9 +58,13 @@ public class PlayerArms : MonoBehaviour
     [Tooltip("Follow-through: angle of the shooting arm above horizontal, toward the rim, in degrees.")]
     [SerializeField] private float _followThroughAngle = 65f;
 
-    // Smoothed hand poses (index 0 = left, 1 = right).
-    private readonly Vector3[] _palm = new Vector3[2];
-    private readonly Quaternion[] _handRotation = new Quaternion[2];
+    // Smoothed hand poses (index 0 = left, 1 = right), in the player's own
+    // frame (from the capsule's center, turned with the body). Running and
+    // turning carry the hands along for free; only the hand's own motion (to
+    // the ball, to a guard pose...) is eased. Smoothing them in the world made
+    // the hands fall behind whenever the player ran faster than the hand speed.
+    private readonly Vector3[] _palmLocal = new Vector3[2];
+    private readonly Quaternion[] _handRotationLocal = new Quaternion[2];
     private bool _started;
     private Rigidbody _rigidbody;
 
@@ -76,13 +80,19 @@ public class PlayerArms : MonoBehaviour
     {
         if (_body == null || _dribbler == null || _ball == null) return;
 
+        // Where the body will be posed this step (see PlayerBody).
+        Vector3 root = _body.PredictedRootPosition;
+        Quaternion facing = _rigidbody.rotation;
+
         float crouch = 0f;
         for (int side = -1; side <= 1; side += 2)
         {
             PickTarget(side, out Vector3 palm, out Vector3 fingers, out Vector3 palmFacing, out Vector3 elbowHint, out bool onBall);
-            MoveHand(side, palm, fingers, palmFacing, onBall);
+            MoveHand(side, palm, fingers, palmFacing, onBall, root, facing);
             int i = side > 0 ? 1 : 0;
-            _body.SetHandTarget(side, _palm[i], _handRotation[i] * Vector3.up, _handRotation[i] * Vector3.forward, elbowHint);
+            Vector3 palmWorld = root + facing * _palmLocal[i];
+            Quaternion handRotation = facing * _handRotationLocal[i];
+            _body.SetHandTarget(side, palmWorld, handRotation * Vector3.up, handRotation * Vector3.forward, elbowHint);
         }
 
         if (_dribbler.IsDribbling) crouch = GetDribbleCrouch();
@@ -182,22 +192,24 @@ public class PlayerArms : MonoBehaviour
         _body.GetRelaxedHand(side, out palm, out fingers, out palmFacing, out elbowHint);
     }
 
-    // Eases the hand toward its target: quickly when it's touching the ball, so
-    // it stays on it, and more slowly when it's moving to a new spot.
-    private void MoveHand(int side, Vector3 palm, Vector3 fingers, Vector3 palmFacing, bool onBall)
+    // Eases the hand toward its target, in the player's frame: quickly when it's
+    // touching the ball, so it stays on it, and more slowly when it's moving to a new spot.
+    private void MoveHand(int side, Vector3 palm, Vector3 fingers, Vector3 palmFacing, bool onBall, Vector3 root, Quaternion facing)
     {
         int i = side > 0 ? 1 : 0;
-        Quaternion rotation = Quaternion.LookRotation(palmFacing, fingers);
+        Quaternion toLocal = Quaternion.Inverse(facing);
+        Vector3 palmLocal = toLocal * (palm - root);
+        Quaternion rotationLocal = toLocal * Quaternion.LookRotation(palmFacing, fingers);
         if (!_started)
         {
-            _palm[i] = palm;
-            _handRotation[i] = rotation;
+            _palmLocal[i] = palmLocal;
+            _handRotationLocal[i] = rotationLocal;
             return;
         }
 
         float speed = onBall ? _onBallHandSpeed : _handSpeed;
-        _palm[i] = Vector3.MoveTowards(_palm[i], palm, speed * Time.fixedDeltaTime);
-        _handRotation[i] = Quaternion.RotateTowards(_handRotation[i], rotation, _handTurnSpeed * Time.fixedDeltaTime);
+        _palmLocal[i] = Vector3.MoveTowards(_palmLocal[i], palmLocal, speed * Time.fixedDeltaTime);
+        _handRotationLocal[i] = Quaternion.RotateTowards(_handRotationLocal[i], rotationLocal, _handTurnSpeed * Time.fixedDeltaTime);
     }
 
     // How far the hips drop so the hand can get down to the dribble: enough that
