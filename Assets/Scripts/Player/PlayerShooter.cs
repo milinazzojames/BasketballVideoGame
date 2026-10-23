@@ -181,16 +181,23 @@ public class PlayerShooter : MonoBehaviour
 
         // Green layups can bank too; green jump shots always go straight at the rim.
         bool bank = layup ? ShouldBankLayup(rimToPlayer) : !green && ShouldBankJumpShot(rimToPlayer);
-        Vector3 aimPoint = bank ? GetBankTarget() : _rim.position;
+
+        // The miss is worked out around the real rim first, so early always
+        // means short and late always means long. Only then is it mirrored
+        // through the board for a bank shot: mirroring first would flip the
+        // part of the miss that points into the board, and a late bank shot
+        // from an angle could land short.
+        Vector3 target = _rim.position;
         if (!green)
         {
             // Early lands short, late lands long (along the shot direction)...
-            aimPoint += shotDirection * (timingError * _missDistancePerMeterError);
+            target += shotDirection * (timingError * _missDistancePerMeterError);
 
             // ...plus random left/right scatter that grows with distance.
             Vector3 sideways = Vector3.Cross(Vector3.up, shotDirection);
-            aimPoint += sideways * (Random.Range(-1f, 1f) * _aimErrorPerMeter * distance);
+            target += sideways * (Random.Range(-1f, 1f) * _aimErrorPerMeter * distance);
         }
+        Vector3 aimPoint = bank ? GetBankTarget(target) : target;
 
         float launchAngle = layup ? PickLayupAngle(bank) : PickLaunchAngle(distance);
         if (!ShotMath.TryGetLaunchVelocity(release, aimPoint, launchAngle, out Vector3 velocity)) return;
@@ -283,23 +290,24 @@ public class PlayerShooter : MonoBehaviour
     }
 
     // Mirror trick: a ball bouncing off a flat board travels as if it passed
-    // through the board and kept going to a "mirror rim" behind it. So we aim at
-    // that mirror rim, and the board bounces the ball into the real one.
+    // through the board and kept going to a "mirror point" behind it. So we aim
+    // at the mirror of the point we want to hit (the rim, or a spot a little
+    // short or long of it for a miss), and the board bounces the ball into it.
     // The board takes away some speed into the board (bounciness below 1), so
-    // after the bounce the ball covers less distance; we put the mirror rim
+    // after the bounce the ball covers less distance; we put the mirror point
     // farther back by dividing by the bounciness to make up for it.
-    private Vector3 GetBankTarget()
+    private Vector3 GetBankTarget(Vector3 point)
     {
         Vector3 boardNormal = Flatten(-_backboard.forward);   // points from the board toward the court
         // The ball's center can only get within one ball radius of the board face.
         Vector3 boardFace = _backboard.position + boardNormal * (_backboard.lossyScale.z / 2f);
         Vector3 bouncePlane = boardFace + boardNormal * _ball.Radius;
 
-        float rimToPlane = Vector3.Dot(_rim.position - bouncePlane, boardNormal);
-        float mirrorDepth = rimToPlane / GetBoardBounciness();
+        float pointToPlane = Vector3.Dot(point - bouncePlane, boardNormal);
+        float mirrorDepth = pointToPlane / GetBoardBounciness();
 
-        // Move the rim center straight back through the plane to the mirror spot.
-        return _rim.position - boardNormal * (rimToPlane + mirrorDepth);
+        // Move the point straight back through the plane to the mirror spot.
+        return point - boardNormal * (pointToPlane + mirrorDepth);
     }
 
     // Unity averages the ball's and board's bounciness (both use "Average" combine).
