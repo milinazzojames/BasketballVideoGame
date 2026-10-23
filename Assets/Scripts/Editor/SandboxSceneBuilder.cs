@@ -89,7 +89,8 @@ public static class SandboxSceneBuilder
     [MenuItem("Basketball/Build Sandbox Scene")]
     public static void Build()
     {
-        if (System.IO.File.Exists(ScenePath) &&
+        // In batch mode (Unity run from the command line) nobody can answer the dialog, so it just rebuilds.
+        if (System.IO.File.Exists(ScenePath) && !Application.isBatchMode &&
             !EditorUtility.DisplayDialog("Rebuild Sandbox scene?",
                 $"This replaces {ScenePath}. Any changes made to it by hand will be lost.",
                 "Rebuild", "Cancel"))
@@ -441,7 +442,11 @@ public static class SandboxSceneBuilder
     {
         PlayerBody body = player.gameObject.AddComponent<PlayerBody>();
         SerializedObject serialized = new SerializedObject(body);
-        serialized.FindProperty("_material").objectReferenceValue = GetMaterial("PlayerBody", new Color(0.2f, 0.4f, 0.9f));
+        serialized.FindProperty("_material").objectReferenceValue = GetMaterial("PlayerBody", new Color(0.2f, 0.4f, 0.9f));   // jersey
+        serialized.FindProperty("_skinMaterial").objectReferenceValue = GetMaterial("PlayerSkin", new Color(0.72f, 0.52f, 0.4f));
+        serialized.FindProperty("_shortsMaterial").objectReferenceValue = GetMaterial("PlayerShorts", new Color(0.15f, 0.3f, 0.75f));
+        serialized.FindProperty("_shoeMaterial").objectReferenceValue = GetMaterial("PlayerShoes", new Color(0.92f, 0.92f, 0.92f));
+        serialized.FindProperty("_hairMaterial").objectReferenceValue = GetMaterial("PlayerHair", new Color(0.08f, 0.06f, 0.05f));
         serialized.FindProperty("_physicsMaterial").objectReferenceValue =
             GetPhysicsMaterial("BodyPhysics", BodyBounce, BodyFriction, PhysicsMaterialCombine.Average);
         serialized.ApplyModifiedPropertiesWithoutUndo();
