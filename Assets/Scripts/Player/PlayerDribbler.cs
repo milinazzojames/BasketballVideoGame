@@ -181,6 +181,8 @@ public class PlayerDribbler : MonoBehaviour
     public bool IsDribbling => _state == State.Dribbling || _state == State.Fumbling;
     // Holding the ball in both hands (gathered for a shot).
     public bool IsHolding => _state == State.Holding;
+    // A dribble move is on its way to the other hand (the ball can't be gathered yet).
+    public bool IsDoingMove => _state == State.Dribbling && _move != Move.None;
     // The hand the ball belongs to: +1 = right, -1 = left. During a move it's
     // the hand the ball is going to.
     public int BallHand => _hand;

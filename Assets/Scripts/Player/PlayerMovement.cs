@@ -21,6 +21,9 @@ public class PlayerMovement : MonoBehaviour
     private float _slowDownUntil = float.NegativeInfinity;
     private float _spinDegreesLeft;
     private float _spinSpeed;
+    private bool _hasFacingOverride;
+    private Vector3 _facingOverride;
+    private float _facingOverrideSpeed;
 
     // Caps the top speed at this fraction (0-1) for a moment, like a hesitation
     // dribble. Speeding back up afterwards uses the normal acceleration.
@@ -37,6 +40,19 @@ public class PlayerMovement : MonoBehaviour
     {
         _spinDegreesLeft = degrees;
         _spinSpeed = Mathf.Abs(degrees) / Mathf.Max(seconds, 0.01f);
+    }
+
+    // Turns the body toward a direction for this physics step, at this turn speed
+    // (degrees per second), instead of facing the way it's moving. Call it every
+    // step while it should apply (the shooter does, to face the hoop). It also
+    // cuts a spin move short. The player still moves where the stick points.
+    public void FaceDirection(Vector3 direction, float degreesPerSecond)
+    {
+        direction.y = 0f;
+        if (direction.sqrMagnitude < 0.0001f) return;
+        _hasFacingOverride = true;
+        _facingOverride = direction.normalized;
+        _facingOverrideSpeed = degreesPerSecond;
     }
 
     // Jumps straight up at this speed (m/s), if standing on the floor. Gravity
@@ -135,6 +151,16 @@ public class PlayerMovement : MonoBehaviour
 
         floorVelocity = direction * speed;
         _rigidbody.linearVelocity = new Vector3(floorVelocity.x, velocity.y, floorVelocity.z);
+
+        // Something asked the body to face a set way this step (like the hoop for a shot).
+        if (_hasFacingOverride)
+        {
+            _hasFacingOverride = false;
+            _spinDegreesLeft = 0f;
+            _rigidbody.MoveRotation(Quaternion.RotateTowards(
+                _rigidbody.rotation, Quaternion.LookRotation(_facingOverride), _facingOverrideSpeed * dt));
+            return;
+        }
 
         // A spin turns the body at its own speed until it's done.
         if (_spinDegreesLeft != 0f)
