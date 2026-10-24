@@ -1,7 +1,8 @@
 using UnityEngine;
 
-// A stand-in human body made of primitives (capsules, a sphere for the head,
-// boxes for hands and feet), sized like a 6'6" (1.98 m) player. The player's
+// A stand-in human body made of primitives (capsules, spheres, boxes), sized
+// like a 6'6" (1.98 m) player, dressed in a jersey, shorts and shoes, with a
+// simple face and hair. The player's
 // capsule still does the moving (feet on the floor, bumping into walls); this
 // script poses the body parts around it every physics step.
 //
@@ -35,9 +36,18 @@ public class PlayerBody : MonoBehaviour
 
     [Tooltip("The object the body parts are built under. Keep it at the top of the scene, not under the player.")]
     [SerializeField] private Transform _partsRoot;
-    [SerializeField] private Material _material;
     [Tooltip("Bounce and friction of the body parts against the ball.")]
     [SerializeField] private PhysicsMaterial _physicsMaterial;
+
+    [Header("Look")]
+    [Tooltip("Jersey (chest and stomach). Also used for any part whose own material below is empty.")]
+    [SerializeField] private Material _material;
+    [Tooltip("Skin: head, neck, arms, hands and legs.")]
+    [SerializeField] private Material _skinMaterial;
+    [SerializeField] private Material _shortsMaterial;
+    [SerializeField] private Material _shoeMaterial;
+    [Tooltip("Hair and eyes.")]
+    [SerializeField] private Material _hairMaterial;
     [Tooltip("Hide the player's capsule (and its facing marker) while the body is shown.")]
     [SerializeField] private bool _hideCapsule = true;
 
@@ -77,10 +87,16 @@ public class PlayerBody : MonoBehaviour
     [Tooltip("Foot length (x), width (y) and how far the heel sticks out behind the ankle (z).")]
     [SerializeField] private Vector3 _footSize = new Vector3(0.28f, 0.1f, 0.06f);
 
+    [Header("Torso (meters; x = width, y = depth front to back)")]
+    [Tooltip("Chest size. Wider than it is deep, like a real chest.")]
+    [SerializeField] private Vector2 _chestSize = new Vector2(0.42f, 0.25f);
+    [Tooltip("Stomach and waist size.")]
+    [SerializeField] private Vector2 _waistSize = new Vector2(0.33f, 0.23f);
+    [Tooltip("How far the shorts come down the thigh from the hip joint.")]
+    [SerializeField] private float _shortsLength = 0.32f;
+
     [Header("Thickness (capsule radius, meters)")]
     [SerializeField] private float _hipsRadius = 0.15f;
-    [SerializeField] private float _spineRadius = 0.14f;
-    [SerializeField] private float _chestRadius = 0.17f;
     [SerializeField] private float _neckRadius = 0.06f;
     [SerializeField] private float _upperArmRadius = 0.05f;
     [SerializeField] private float _lowerArmRadius = 0.04f;
@@ -627,85 +643,166 @@ public class PlayerBody : MonoBehaviour
         }
     }
 
-    // The visible, colliding shape of a part: a child of the part, offset so
-    // it runs along the bone (the part itself sits on the joint).
+    // The shapes of a part, as children of it, offset so they run along the bone
+    // (the part itself sits on the joint). Each part has one shape that collides
+    // with the ball; the rest (hair, nose, shorts, muscles...) are only drawn.
+    // For a part's local axes: Y runs along the bone; for the torso and head,
+    // Z faces forward and X to the right.
     private void CreateShape(Bone bone, Transform part)
     {
+        int side = bone.ToString().StartsWith("Right") ? 1 : -1;
         switch (bone)
         {
             case Bone.Hips:
-                // Lying across, from one hip joint to the other.
-                AddCapsule(part, _hipsRadius, _hipWidth + _hipsRadius * 2f, Vector3.up * 0.03f, Quaternion.Euler(0f, 0f, 90f));
+                // Lying across, from one hip joint to the other. The top of the shorts.
+                AddCapsule(part, _hipsRadius, _hipWidth + _hipsRadius * 2f, Vector3.up * 0.03f, Quaternion.Euler(0f, 0f, 90f), _shortsMaterial);
                 break;
             case Bone.Spine:
-                AddCapsule(part, _spineRadius, _spineLength + _spineRadius, Vector3.up * (_spineLength / 2f), Quaternion.identity);
+                // The stomach: wider than it is deep.
+                AddTorsoBlock(part, _spineLength, _waistSize, _material);
                 break;
             case Bone.Chest:
                 float chestLength = _shoulderHeight + _neckBaseAboveShoulders - (LegHeight + _hipsLength + _spineLength);
-                AddCapsule(part, _chestRadius, chestLength + _chestRadius, Vector3.up * (chestLength / 2f), Quaternion.identity);
+                AddTorsoBlock(part, chestLength, _chestSize, _material);
                 break;
             case Bone.Neck:
-                AddCapsule(part, _neckRadius, _neckLength + _neckRadius, Vector3.up * (_neckLength / 2f), Quaternion.identity);
+                AddCapsule(part, _neckRadius, _neckLength + _neckRadius, Vector3.up * (_neckLength / 2f), Quaternion.identity, _skinMaterial);
                 break;
             case Bone.Head:
-                AddShape(PrimitiveType.Sphere, part, Vector3.up * _headRadius, Quaternion.identity, Vector3.one * (_headRadius * 2f));
+                AddHead(part);
                 break;
             case Bone.LeftUpperArm:
             case Bone.RightUpperArm:
-                AddLimb(part, _upperArmRadius, _upperArmLength);
+                AddLimb(part, _upperArmRadius, _upperArmLength, _skinMaterial);
+                // A rounded shoulder over the joint.
+                AddDetail(PrimitiveType.Sphere, part, Vector3.up * 0.03f, Quaternion.identity,
+                    Vector3.one * (_upperArmRadius * 2.6f), _skinMaterial);
                 break;
             case Bone.LeftLowerArm:
             case Bone.RightLowerArm:
-                AddLimb(part, _lowerArmRadius, _lowerArmLength);
+                AddLimb(part, _lowerArmRadius, _lowerArmLength, _skinMaterial);
                 break;
             case Bone.LeftUpperLeg:
             case Bone.RightUpperLeg:
-                AddLimb(part, _upperLegRadius, _upperLegLength);
+                AddLimb(part, _upperLegRadius, _upperLegLength, _skinMaterial);
+                // The leg of the shorts, a little wider than the thigh, down toward the knee.
+                float shortsRadius = _upperLegRadius + 0.02f;
+                AddDetail(PrimitiveType.Capsule, part, Vector3.up * (_shortsLength / 2f), Quaternion.identity,
+                    new Vector3(shortsRadius * 2f, Mathf.Max(_shortsLength, shortsRadius * 2f) / 2f, shortsRadius * 2f), _shortsMaterial);
                 break;
             case Bone.LeftLowerLeg:
             case Bone.RightLowerLeg:
-                AddLimb(part, _lowerLegRadius, _lowerLegLength);
+                AddLimb(part, _lowerLegRadius, _lowerLegLength, _skinMaterial);
+                // The calf muscle: the back of the upper shin (the leg's Z points forward).
+                AddDetail(PrimitiveType.Sphere, part, new Vector3(0f, _lowerLegLength * 0.3f, -0.015f), Quaternion.identity,
+                    new Vector3(_lowerLegRadius * 1.7f, _lowerLegLength * 0.45f, _lowerLegRadius * 1.9f), _skinMaterial);
                 break;
             case Bone.LeftHand:
             case Bone.RightHand:
                 // X = width, Y = along the fingers, Z = thickness (out of the palm).
                 AddShape(PrimitiveType.Cube, part, Vector3.up * (_handLength / 2f), Quaternion.identity,
-                    new Vector3(_handSize.x, _handLength, _handSize.y));
+                    new Vector3(_handSize.x, _handLength, _handSize.y), _skinMaterial);
+                // The thumb, on the inner edge of the hand (-X for the right hand,
+                // +X for the left), angled away from the fingers.
+                const float thumbRadius = 0.012f;
+                AddDetail(PrimitiveType.Capsule, part,
+                    new Vector3(-side * (_handSize.x / 2f + thumbRadius * 0.5f), _handLength * 0.3f, _handSize.y * 0.3f),
+                    Quaternion.Euler(0f, 0f, side * 25f), new Vector3(thumbRadius * 2f, 0.035f, thumbRadius * 2f), _skinMaterial);
                 break;
             case Bone.LeftFoot:
             case Bone.RightFoot:
                 // The foot's Y points toward the toes and its Z is up; the sole sits on the floor.
                 AddShape(PrimitiveType.Cube, part,
                     new Vector3(0f, _footSize.x / 2f - _footSize.z, -_ankleHeight / 2f), Quaternion.identity,
-                    new Vector3(_footSize.y, _footSize.x, _ankleHeight));
+                    new Vector3(_footSize.y, _footSize.x, _ankleHeight), _shoeMaterial);
                 break;
+        }
+    }
+
+    // A section of the torso, wider than it is deep (size: x = width, y = depth).
+    // It collides as a box and is drawn as a rounded ellipsoid a little taller
+    // than the section, so the sections blend into each other.
+    private void AddTorsoBlock(Transform part, float length, Vector2 size, Material material)
+    {
+        Vector3 center = Vector3.up * (length / 2f);
+        AddShape(PrimitiveType.Cube, part, center, Quaternion.identity, new Vector3(size.x * 0.9f, length, size.y), material, visible: false);
+        AddDetail(PrimitiveType.Sphere, part, center, Quaternion.identity, new Vector3(size.x, length + 0.1f, size.y), material);
+    }
+
+    // The head collides as a sphere, and is drawn narrower than it is deep and
+    // tall, like a real head, with hair, a nose, eyes and ears. The nose shows
+    // which way the player faces.
+    private void AddHead(Transform part)
+    {
+        Vector3 center = Vector3.up * _headRadius;
+        float width = _headRadius * 1.5f;
+        float depth = _headRadius * 1.75f;
+        AddShape(PrimitiveType.Sphere, part, center, Quaternion.identity, Vector3.one * (_headRadius * 2f), _skinMaterial, visible: false);
+        AddDetail(PrimitiveType.Sphere, part, center, Quaternion.identity, new Vector3(width, _headRadius * 2f, depth), _skinMaterial);
+
+        // Short hair: a cap over the top and back of the head.
+        AddDetail(PrimitiveType.Sphere, part, center + new Vector3(0f, _headRadius * 0.4f, -_headRadius * 0.08f), Quaternion.identity,
+            new Vector3(width * 1.06f, _headRadius * 1.35f, depth * 1.06f), _hairMaterial);
+
+        AddDetail(PrimitiveType.Cube, part, center + new Vector3(0f, -_headRadius * 0.1f, depth / 2f), Quaternion.identity,
+            new Vector3(0.025f, 0.045f, 0.035f), _skinMaterial);
+        for (int s = -1; s <= 1; s += 2)
+        {
+            AddDetail(PrimitiveType.Sphere, part, center + new Vector3(s * width * 0.2f, _headRadius * 0.15f, depth * 0.45f), Quaternion.identity,
+                Vector3.one * 0.022f, _hairMaterial);
+            AddDetail(PrimitiveType.Sphere, part, center + new Vector3(s * width / 2f, 0f, 0f), Quaternion.identity,
+                new Vector3(0.02f, 0.055f, 0.04f), _skinMaterial);
         }
     }
 
     // A limb capsule running from the joint along the bone. It's one radius
     // longer than the bone, so neighboring parts overlap a little at the joints.
-    private void AddLimb(Transform part, float radius, float length)
+    private void AddLimb(Transform part, float radius, float length, Material material)
     {
-        AddCapsule(part, radius, length + radius, Vector3.up * (length / 2f), Quaternion.identity);
+        AddCapsule(part, radius, length + radius, Vector3.up * (length / 2f), Quaternion.identity, material);
     }
 
     // Unity's capsule is 2 m tall with radius 0.5 (along its Y axis), so X/Z
     // scale sets the radius and Y scale sets the height.
-    private void AddCapsule(Transform part, float radius, float height, Vector3 center, Quaternion rotation)
+    private void AddCapsule(Transform part, float radius, float height, Vector3 center, Quaternion rotation, Material material)
     {
         height = Mathf.Max(height, radius * 2f);
-        AddShape(PrimitiveType.Capsule, part, center, rotation, new Vector3(radius * 2f, height / 2f, radius * 2f));
+        AddShape(PrimitiveType.Capsule, part, center, rotation, new Vector3(radius * 2f, height / 2f, radius * 2f), material);
     }
 
-    private void AddShape(PrimitiveType type, Transform part, Vector3 localPosition, Quaternion localRotation, Vector3 scale)
+    // The part's one colliding shape. Invisible when a nicer-looking detail draws it instead.
+    private void AddShape(PrimitiveType type, Transform part, Vector3 localPosition, Quaternion localRotation, Vector3 scale,
+        Material material, bool visible = true)
+    {
+        GameObject shape = CreatePrimitive(type, "Shape", part, localPosition, localRotation, scale, material);
+        if (_physicsMaterial != null) shape.GetComponent<Collider>().sharedMaterial = _physicsMaterial;
+        if (!visible)
+        {
+            DestroyImmediate(shape.GetComponent<MeshRenderer>());
+            DestroyImmediate(shape.GetComponent<MeshFilter>());
+        }
+    }
+
+    // A drawn-only shape (no collider), so the ball and the arm-reach math only
+    // ever deal with the one simple shape per part.
+    private void AddDetail(PrimitiveType type, Transform part, Vector3 localPosition, Quaternion localRotation, Vector3 scale, Material material)
+    {
+        GameObject detail = CreatePrimitive(type, "Detail", part, localPosition, localRotation, scale, material);
+        DestroyImmediate(detail.GetComponent<Collider>());
+    }
+
+    private GameObject CreatePrimitive(PrimitiveType type, string name, Transform part, Vector3 localPosition, Quaternion localRotation,
+        Vector3 scale, Material material)
     {
         GameObject shape = GameObject.CreatePrimitive(type);
-        shape.name = "Shape";
+        shape.name = name;
         shape.transform.SetParent(part, false);
         shape.transform.localPosition = localPosition;
         shape.transform.localRotation = localRotation;
         shape.transform.localScale = scale;
-        if (_material != null) shape.GetComponent<Renderer>().sharedMaterial = _material;
-        if (_physicsMaterial != null) shape.GetComponent<Collider>().sharedMaterial = _physicsMaterial;
+        // Parts without their own material use the main (jersey) one.
+        Material use = material != null ? material : _material;
+        if (use != null) shape.GetComponent<Renderer>().sharedMaterial = use;
+        return shape;
     }
 }
