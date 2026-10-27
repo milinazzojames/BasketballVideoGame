@@ -719,26 +719,25 @@ public class PlayerBody : MonoBehaviour
         }
     }
 
-    // A section of the torso, wider than it is deep (size: x = width, y = depth).
-    // It collides as a box and is drawn as a rounded ellipsoid a little taller
-    // than the section, so the sections blend into each other.
+    // A section of the torso, wider than it is deep (size: x = width, y = depth),
+    // drawn as a rounded ellipsoid a little taller than the section, so the
+    // sections blend into each other. It collides as that same ellipsoid, so
+    // the ball bounces off what you see (a box stuck out past it at the corners).
     private void AddTorsoBlock(Transform part, float length, Vector2 size, Material material)
     {
         Vector3 center = Vector3.up * (length / 2f);
-        AddShape(PrimitiveType.Cube, part, center, Quaternion.identity, new Vector3(size.x * 0.9f, length, size.y), material, visible: false);
-        AddDetail(PrimitiveType.Sphere, part, center, Quaternion.identity, new Vector3(size.x, length + 0.1f, size.y), material);
+        AddEllipsoid(part, center, new Vector3(size.x, length + 0.1f, size.y), material);
     }
 
-    // The head collides as a sphere, and is drawn narrower than it is deep and
-    // tall, like a real head, with hair, a nose, eyes and ears. The nose shows
-    // which way the player faces.
+    // The head is narrower than it is deep and tall, like a real head, and
+    // collides as that same shape. Hair, a nose, eyes and ears are only drawn.
+    // The nose shows which way the player faces.
     private void AddHead(Transform part)
     {
         Vector3 center = Vector3.up * _headRadius;
         float width = _headRadius * 1.5f;
         float depth = _headRadius * 1.75f;
-        AddShape(PrimitiveType.Sphere, part, center, Quaternion.identity, Vector3.one * (_headRadius * 2f), _skinMaterial, visible: false);
-        AddDetail(PrimitiveType.Sphere, part, center, Quaternion.identity, new Vector3(width, _headRadius * 2f, depth), _skinMaterial);
+        AddEllipsoid(part, center, new Vector3(width, _headRadius * 2f, depth), _skinMaterial);
 
         // Short hair: a cap over the top and back of the head.
         AddDetail(PrimitiveType.Sphere, part, center + new Vector3(0f, _headRadius * 0.4f, -_headRadius * 0.08f), Quaternion.identity,
@@ -770,17 +769,75 @@ public class PlayerBody : MonoBehaviour
         AddShape(PrimitiveType.Capsule, part, center, rotation, new Vector3(radius * 2f, height / 2f, radius * 2f), material);
     }
 
-    // The part's one colliding shape. Invisible when a nicer-looking detail draws it instead.
+    // The part's one colliding shape, drawn as it collides.
     private void AddShape(PrimitiveType type, Transform part, Vector3 localPosition, Quaternion localRotation, Vector3 scale,
-        Material material, bool visible = true)
+        Material material)
     {
         GameObject shape = CreatePrimitive(type, "Shape", part, localPosition, localRotation, scale, material);
         if (_physicsMaterial != null) shape.GetComponent<Collider>().sharedMaterial = _physicsMaterial;
-        if (!visible)
+    }
+
+    // A stretched sphere that collides as it's drawn. Unity's sphere collider
+    // can't be stretched (it stays round), so it's swapped for a convex mesh
+    // collider, which follows the scale. Unity's sphere mesh has too many
+    // triangles for a convex collider (the limit is 256), so the collider uses
+    // a simpler sphere with its corners on the drawn surface: it sits just
+    // inside what you see (by under 4% of the radius).
+    private void AddEllipsoid(Transform part, Vector3 center, Vector3 size, Material material)
+    {
+        AddShape(PrimitiveType.Sphere, part, center, Quaternion.identity, size, material);
+        GameObject shape = part.GetChild(part.childCount - 1).gameObject;
+        DestroyImmediate(shape.GetComponent<SphereCollider>());
+        MeshCollider meshCollider = shape.AddComponent<MeshCollider>();
+        meshCollider.sharedMesh = GetColliderSphere();
+        meshCollider.convex = true;
+        if (_physicsMaterial != null) meshCollider.sharedMaterial = _physicsMaterial;
+    }
+
+    private static Mesh _colliderSphere;
+
+    // A sphere of radius 0.5 (like Unity's) with 12 slices around and 8 bands
+    // from top to bottom: 168 triangles.
+    private static Mesh GetColliderSphere()
+    {
+        if (_colliderSphere != null) return _colliderSphere;
+        const int Slices = 12;
+        const int Bands = 8;
+
+        var vertices = new System.Collections.Generic.List<Vector3> { Vector3.up * 0.5f };
+        for (int b = 1; b < Bands; b++)
         {
-            DestroyImmediate(shape.GetComponent<MeshRenderer>());
-            DestroyImmediate(shape.GetComponent<MeshFilter>());
+            float polar = Mathf.PI * b / Bands;
+            for (int s = 0; s < Slices; s++)
+            {
+                float around = 2f * Mathf.PI * s / Slices;
+                vertices.Add(0.5f * new Vector3(Mathf.Sin(polar) * Mathf.Cos(around), Mathf.Cos(polar), Mathf.Sin(polar) * Mathf.Sin(around)));
+            }
         }
+        vertices.Add(Vector3.down * 0.5f);
+
+        int bottom = vertices.Count - 1;
+        var triangles = new System.Collections.Generic.List<int>();
+        for (int s = 0; s < Slices; s++)
+        {
+            int next = (s + 1) % Slices;
+            triangles.AddRange(new[] { 0, 1 + next, 1 + s });
+            for (int b = 0; b < Bands - 2; b++)
+            {
+                int row = 1 + b * Slices;
+                int below = row + Slices;
+                triangles.AddRange(new[] { row + s, row + next, below + s });
+                triangles.AddRange(new[] { row + next, below + next, below + s });
+            }
+            int last = 1 + (Bands - 2) * Slices;
+            triangles.AddRange(new[] { last + s, last + next, bottom });
+        }
+
+        _colliderSphere = new Mesh { name = "ColliderSphere" };
+        _colliderSphere.SetVertices(vertices);
+        _colliderSphere.SetTriangles(triangles, 0);
+        _colliderSphere.RecalculateNormals();
+        return _colliderSphere;
     }
 
     // A drawn-only shape (no collider), so the ball and the arm-reach math only

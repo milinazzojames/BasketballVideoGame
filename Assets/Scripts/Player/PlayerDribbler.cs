@@ -21,13 +21,15 @@ using UnityEngine;
 //   - if the ball gets knocked too far away (say it hits the pole), the dribble is lost
 // Moves take a moment. A flick while a move is still on its way is queued and
 // starts when the ball reaches the new hand (a combo).
-// Fumbles are optional (_allowFumbles, off by default): with them on, a flick too
-// soon, a move that can't get the ball to the new hand, or a ball that comes up
-// out of the arm's reach fumbles the handle: the hand stops guiding the ball, and
+// Fumbles (_allowFumbles, on by default): a move that can't get the ball to the
+// new hand, or a ball that comes up out of the arm's reach (say, a sloppy hard
+// cut at full sprint), fumbles the handle: the hand stops guiding the ball, and
 // unless it comes back up near the hand, it rolls away and the dribble is lost.
+// Each fumble logs why, with the numbers (speed, turn rate, reach), so a ball
+// lost during normal play can be traced to its cause and tuned.
 // Either way, a ball knocked far away (say, off the pole) is lost.
-// PlayerShooter calls Gather() to pick the ball up into both hands for a shot,
-// and LetGo() when the shot leaves the hands.
+// PlayerShooter calls Gather() to pick the ball up into both hands for a shot
+// (only once it's within the hands' reach), and LetGo() when the shot leaves the hands.
 [RequireComponent(typeof(Rigidbody))]
 public class PlayerDribbler : MonoBehaviour
 {
@@ -60,8 +62,8 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _sideOffset = 0.6f;
     [Tooltip("How far in front of the player's center the ball bounces, in meters.")]
     [SerializeField] private float _forwardOffset = 0.25f;
-    [Tooltip("Largest sideways speed the hand gives the ball to get it back under the hand, in m/s on top of the player's own speed. High enough that the ball keeps up through hard cuts and turns.")]
-    [SerializeField] private float _maxGuideSpeed = 8f;
+    [Tooltip("Largest sideways speed the hand gives the ball to get it back under the hand, in m/s on top of the player's own speed. Too high and the ball slides sideways like a magnet; too low and it can't keep up through hard cuts and turns.")]
+    [SerializeField] private float _maxGuideSpeed = 4f;
     [Tooltip("If the ball ends up this far from the player's center (meters, along the floor), the dribble is lost.")]
     [SerializeField] private float _loseDistance = 1.5f;
 
@@ -130,8 +132,8 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _catchRadius = 0.3f;
     [Tooltip("A move that hasn't reached the new hand after this many seconds (say, the ball stopped bouncing) ends; with fumbles on, it's fumbled.")]
     [SerializeField] private float _maxMoveTime = 1.5f;
-    [Tooltip("Off: the hand never loses the ball by itself. A move that misses the new hand is caught on the next bounce, a move that takes too long just ends, and the arm's reach isn't checked. On: those mistakes fumble the ball. A ball knocked past the lose distance is lost either way.")]
-    [SerializeField] private bool _allowFumbles = false;
+    [Tooltip("On: a move that misses the new hand, a move that takes too long, or a ball that comes up out of the arm's reach fumbles the ball (each logs why). Off (for testing only): the hand never loses the ball by itself. A ball knocked past the lose distance is lost either way.")]
+    [SerializeField] private bool _allowFumbles = true;
     [Tooltip("Seconds a fumbled ball can still be caught again, if it comes back up near the hand. After that (or once it's past the lose distance) the dribble is lost.")]
     [SerializeField] private float _fumbleTime = 1f;
     [Tooltip("With a body: when the ball comes up to the hand, its center has to be within the arm's reach (shoulder to palm) plus the ball's radius plus this much, in meters, or (with fumbles on) the hand can't push it and it's fumbled. Covers the leaning and reaching the primitive body doesn't do.")]
@@ -144,10 +146,12 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _pickupMaxHeight = 1.6f;
     [Tooltip("Seconds after a shot (or a lost dribble) before the player can pick the ball up again, so it isn't grabbed right back.")]
     [SerializeField] private float _pickupDelayAfterShot = 1f;
-    [Tooltip("Seconds a shot keeps passing through the shooter's own capsule and body after it leaves the hand. The hand releases it inside the capsule (near the head), and bumping into it there would knock the shot off its line.")]
+    [Tooltip("At least this many seconds, a shot passes through the shooter's own capsule after it leaves the hand. The hand releases it inside the capsule (near the head), and bumping into it there would knock the shot off its line. After this, the capsule starts bumping the ball again as soon as they no longer overlap.")]
     [SerializeField] private float _shotPassThroughTime = 0.5f;
 
     [Header("Holding (while charging a shot)")]
+    [Tooltip("To gather the ball for a shot, its center has to be within this distance of the hand that has it (meters, along the floor), as well as within the arm's reach. Otherwise the shot waits for it (a buffered Shoot), so the ball never snaps into the hands from far away.")]
+    [SerializeField] private float _gatherRadius = 0.45f;
     [Tooltip("How far in front of the player's center the ball is held, in meters.")]
     [SerializeField] private float _holdForward = 0.35f;
     [Tooltip("Height of the ball's center while held, in meters. About chest height.")]
@@ -166,6 +170,8 @@ public class PlayerDribbler : MonoBehaviour
     private Move _pendingMove = Move.None;
     private float _pendingTime;
     private Quaternion _moveStartRotation;
+    private float _lastYaw;
+    private float _turnRate;
     private bool _stickCentered;
     private float _stickCenteredTime;
     private bool _stickOut;
@@ -199,6 +205,9 @@ public class PlayerDribbler : MonoBehaviour
     public float CurrentHandHeight => _currentHandHeight;
     // Where the held ball is being carried to this step.
     public Vector3 HeldBallTarget => _heldBallTarget;
+    // The ball can be picked up into both hands for a shot right now (see Gather).
+    public bool CanGather => _state == State.Dribbling && _move == Move.None
+        && FlatDistance(_ball.Body.position, HandPoint()) <= _gatherRadius && IsWithinReach(_ball.Body.position);
 
     private void Awake()
     {
@@ -215,11 +224,18 @@ public class PlayerDribbler : MonoBehaviour
     {
         if (_ball == null) return;
 
+        // How fast the body is turning, for the fumble log (degrees per second).
+        float yaw = _body.rotation.eulerAngles.y;
+        _turnRate = Mathf.Abs(Mathf.DeltaAngle(_lastYaw, yaw)) / Time.fixedDeltaTime;
+        _lastYaw = yaw;
+
         switch (_state)
         {
             case State.Loose:
-                // A shot that has had time to get clear starts bumping into the shooter again.
-                if (Time.time >= _passThroughUntil && _passThroughUntil > float.NegativeInfinity)
+                // A shot that has had time to get clear, and isn't inside the
+                // capsule anymore, starts bumping into the shooter again. (Turning
+                // it back on while they overlap would shove the ball out.)
+                if (Time.time >= _passThroughUntil && _passThroughUntil > float.NegativeInfinity && !IsBallInCapsule())
                 {
                     _passThroughUntil = float.NegativeInfinity;
                     IgnoreOwnBall(false);
@@ -249,12 +265,12 @@ public class PlayerDribbler : MonoBehaviour
     }
 
     // Picks the ball up out of the dribble into both hands. Returns false if
-    // the player isn't dribbling (no ball to shoot), or while a dribble move is
-    // on its way to the other hand: the ball is under the legs or behind the
-    // back, out of reach, so it can't jump into the hands.
+    // the player isn't dribbling (no ball to shoot), while a dribble move is on
+    // its way to the other hand (the ball is under the legs or behind the back),
+    // or while the ball is out of the hands' reach: it can't jump into the hands.
     public bool Gather()
     {
-        if (_state != State.Dribbling || _move != Move.None) return false;
+        if (!CanGather) return false;
         _ball.Hold();
         SetState(State.Holding);
         return true;
@@ -331,7 +347,7 @@ public class PlayerDribbler : MonoBehaviour
                 // Without fumbles, a miss is just guided back to the hand on the next bounce.
                 if (_allowFumbles && FlatDistance(ballPosition, catchPoint) > _catchRadius)
                 {
-                    Fumble("Fumbled the move: the ball didn't come up to the hand.");
+                    Fumble($"Fumbled the move: the ball came up {FlatDistance(ballPosition, catchPoint):0.00} m from the new hand (catch radius {_catchRadius:0.00}).");
                     return;
                 }
             }
@@ -341,7 +357,7 @@ public class PlayerDribbler : MonoBehaviour
             // speed), the hand can't get on top of it to push it.
             if (_allowFumbles && !IsWithinReach(ballPosition))
             {
-                Fumble("Fumbled: the ball came up out of the hand's reach.");
+                Fumble($"Fumbled: the ball came up out of the hand's reach ({ReachInfo(ballPosition)}).");
                 return;
             }
 
@@ -373,7 +389,7 @@ public class PlayerDribbler : MonoBehaviour
         {
             if (_allowFumbles)
             {
-                Fumble("Fumbled the move: it took too long.");
+                Fumble($"Fumbled the move: it took too long (over {_maxMoveTime:0.00} s).");
                 return;
             }
             _move = Move.None;
@@ -504,14 +520,11 @@ public class PlayerDribbler : MonoBehaviour
 
     private void OnMoveInput(Move move)
     {
-        // A new move while the last one is still on its way: with fumbles on,
-        // that's too quick. Otherwise it waits and starts when the ball reaches
-        // the new hand (or is dropped after the move buffer time).
-        if (_move != Move.None && _allowFumbles)
-        {
-            Fumble("Fumbled: moves too quick.");
-            return;
-        }
+        // A new move while the last one is still on its way waits and starts
+        // when the ball reaches the new hand (or is dropped after the move
+        // buffer time). It used to fumble with fumbles on, which lost the ball
+        // on quick double flicks in normal play.
+        if (_move != Move.None) Debug.Log($"Dribble move {move} queued behind {_move}.");
         RequestMove(move);
     }
 
@@ -560,7 +573,10 @@ public class PlayerDribbler : MonoBehaviour
     // The hand stops guiding the ball: it flies on with whatever speed it has.
     private void Fumble(string reason)
     {
-        Debug.Log(reason);
+        Vector3 speed = _body.linearVelocity;
+        speed.y = 0f;
+        string move = _move != Move.None ? $", {_move} {Time.time - _moveStartTime:0.00} s in" : "";
+        Debug.Log($"{reason} Speed {speed.magnitude:0.0} m/s, sprint {_input.Sprint:0.00}, turning {_turnRate:0} deg/s{move}.");
         _move = Move.None;
         _pendingMove = Move.None;
         _fumbleStartTime = Time.time;
@@ -625,6 +641,15 @@ public class PlayerDribbler : MonoBehaviour
         return Vector3.Distance(shoulder, ballPosition) <= _playerBody.ArmReach + _ball.Radius + _reachSlack;
     }
 
+    // For the fumble log: how far the ball is from the shoulder, and how far the hand can reach.
+    private string ReachInfo(Vector3 ballPosition)
+    {
+        if (_playerBody == null) return "no body";
+        Vector3 shoulder = _body.position + _body.rotation * _playerBody.GetShoulderLocal(_hand);
+        float limit = _playerBody.ArmReach + _ball.Radius + _reachSlack;
+        return $"{Vector3.Distance(shoulder, ballPosition):0.00} m from the shoulder, reach {limit:0.00} m with slack {_reachSlack:0.00}";
+    }
+
     private bool CanPickUp()
     {
         if (_ball.IsHeld || Time.time - _letGoTime < _pickupDelayAfterShot) return false;
@@ -654,6 +679,15 @@ public class PlayerDribbler : MonoBehaviour
         // parts, the way a real ball moves around a player's legs and body instead
         // of bumping off. A loose ball bounces off them.
         IgnoreOwnBall(state != State.Loose);
+    }
+
+    private bool IsBallInCapsule()
+    {
+        Collider ballCollider = _ball.GetComponent<Collider>();
+        return Physics.ComputePenetration(
+            _collider, _body.position, _body.rotation,
+            ballCollider, _ball.Body.position, _ball.Body.rotation,
+            out _, out _);
     }
 
     private void IgnoreOwnBall(bool ignore)

@@ -28,8 +28,9 @@ using UnityEngine;
 // a 1.98 m player's standing reach. The ball leaves from the shooting hand,
 // wherever it is when you let go: release early and it's lower and on the way up.
 // Pressing Shoot turns the player to face the hoop, and they keep facing it
-// through the shot. Pressed in the middle of a dribble move, the press is
-// remembered for a moment and the shot starts as soon as the ball reaches the hand.
+// through the shot. Pressed in the middle of a dribble move (or with the ball out
+// of the hands' reach), the press is remembered for a moment and the shot starts
+// as soon as the ball reaches the hand; the ball never snaps in from far away.
 // Planned (roadmap): a green shot nobody touches is guaranteed to go in.
 [DefaultExecutionOrder(-10)]   // carries the held ball before the dribbler moves it this step
 public class PlayerShooter : MonoBehaviour
@@ -203,8 +204,9 @@ public class PlayerShooter : MonoBehaviour
 
     private void Update()
     {
-        // A Shoot press from the middle of a dribble move starts the shot once the ball is in the hand.
-        if (Time.time <= _bufferedShootUntil && !IsCharging && !_dribbler.IsDoingMove)
+        // A Shoot press from the middle of a dribble move (or with the ball out of
+        // the hands' reach) starts the shot once the ball is at the hand.
+        if (Time.time <= _bufferedShootUntil && !IsCharging && _dribbler.CanGather)
         {
             _bufferedShootUntil = float.NegativeInfinity;
             StartCharging();
@@ -279,8 +281,9 @@ public class PlayerShooter : MonoBehaviour
         if (_dribbler == null) return;
         if (!_dribbler.Gather())
         {
-            // Mid-move, the ball is on its way to the other hand: shoot once it gets there.
-            if (_dribbler.IsDoingMove) _bufferedShootUntil = Time.time + _shootBufferTime;
+            // Mid-move or out of reach, the ball is on its way to the hand: shoot
+            // once it gets there. (A remembered press doesn't renew itself.)
+            if (_dribbler.IsDribbling && Time.time > _bufferedShootUntil) _bufferedShootUntil = Time.time + _shootBufferTime;
             // Otherwise there's no ball, so no shot.
             return;
         }
@@ -443,6 +446,7 @@ public class PlayerShooter : MonoBehaviour
         Vector3 aimPoint = bank ? GetBankTarget(target) : target;
 
         float launchAngle = layup ? PickLayupAngle(bank) : PickLaunchAngle(distance);
+        float pickedAngle = launchAngle;
         // A release from the hand can be low or high (early or late, mid-jump),
         // and a flat angle can't reach a target well above the release. Then
         // the shot goes up steeper instead, so it always heads for the hoop.
@@ -459,7 +463,20 @@ public class PlayerShooter : MonoBehaviour
 
         string shotType = layup ? (bank ? "Layup off the glass" : "Layup") : (bank ? "Bank jump shot" : "Jump shot");
         string pressed = $"pressed at {_pressDistance:0.0} m (window {_pressGreenWidth:0.00}{(_pressLayup != layup ? $", {(_pressLayup ? "layup" : "jump shot")}" : "")})";
-        Debug.Log($"{shotType}: {distance:0.0} m from the rim, {launchAngle:0.0} deg, green window {GreenEnd - GreenStart:0.00}, {pressed}, {(green ? "GREEN" : $"timing off by {timingError:+0.00;-0.00}")}");
+        string angle = launchAngle > pickedAngle ? $"{launchAngle:0.0} deg (steepened from {pickedAngle:0.0})" : $"{launchAngle:0.0} deg";
+        Debug.Log($"{shotType}: {distance:0.0} m from the rim, {angle}, green window {GreenEnd - GreenStart:0.00}, {pressed}, {(green ? "GREEN" : $"timing off by {timingError:+0.00;-0.00}")}{GetJumpLog(release)}");
+    }
+
+    // For the shot log (with a body): how high the jump was planned, how high
+    // the ball left the hand, and whether the hand got it to where the arm was
+    // taking it at this point of the jump (an early release is still on its way up).
+    private string GetJumpLog(Vector3 release)
+    {
+        if (_body == null) return "";
+        float belowPeak = _groundSolesHeight + _jumpHeight - _body.SolesHeight;
+        float missedBy = Vector3.Distance(release, GetReleaseAim(belowPeak));
+        string reached = missedBy <= 0.05f ? "hand reached the aim point" : $"hand {missedBy:0.00} m from the aim point";
+        return $", jump {_jumpHeight:0.00} m{(_jumped ? "" : " (not jumped yet)")}, released at {release.y:0.00} m, {reached}";
     }
 
     // The player's center to the rim center, along the floor, in meters.
