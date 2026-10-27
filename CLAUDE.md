@@ -113,7 +113,7 @@ Each step is meant to be one or a few small PRs. Check off as they land. Passing
 2. [x] Sandbox scene: flat floor, one hoop (rim, backboard, pole) at real dimensions, simple camera
 3. [x] Input Actions asset with the starter layout (Move and Sprint wired up first)
 4. [x] Player movement: capsule moves with the left stick, analog speed, acceleration/deceleration, sprint on R2
-   - [ ] Tighter movement: court-relative stick, speed and direction handled separately, plant on hard cuts, quick stops, body faces the way it moves
+   - [x] Tighter movement: court-relative stick, speed and direction handled separately, plant on hard cuts, quick stops, body faces the way it moves
 5. [x] Ball physics: a ball that bounces and rolls realistically and collides correctly with rim and backboard
    - [x] Invisible walls around the floor and a safety reset, so the ball never falls off the world (real out-of-bounds rules replace them during games later)
 6. [x] Dribbling: ball attached to the player with a simple dribble loop, then right-stick dribble moves
@@ -122,7 +122,7 @@ Each step is meant to be one or a few small PRs. Check off as they land. Passing
    - [ ] Later: picking up the dribble ends it (double dribble rule)
 7. [x] Shooting: hold-and-release Square, shot meter/timing, a computed arc toward the rim with a make/miss window
    - [x] Layups inside 1.8 m: higher release, steeper arc, off the glass except straight on or along the baseline (dunks wait for animation)
-   - [x] Green window sized by distance (wide up close, narrow from deep); moving and contested shots come later
+   - [x] Green window sized by distance (wide up close, narrow from deep), following the player while the meter fills (layup or jump shot decided by where they let go); contested shots come later
    - [ ] Court markings (3-point line, corners, paint) and `CourtGeometry` (2 or 3 from a floor point)
    - [ ] Made baskets and points (`ScoreKeeper`), plus a Shot Lab that measures make rates
    - [ ] A visible jump on every shot (minimum jump heights, dip before takeoff, limited air control)
