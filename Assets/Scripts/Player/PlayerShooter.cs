@@ -13,6 +13,12 @@ using UnityEngine;
 // above), long shots flatter, like real shooters.
 // Close to the rim, the shot is a layup instead: released higher (jumping, arm
 // extended) and closer to the rim, at a steep angle, and usually off the glass.
+// The green window and the shot type follow the player while the meter fills:
+// run out from 3 m to 9 m before letting go and the window shrinks to the 9 m
+// size (it grows and shrinks around its middle, so it never jumps), and the
+// shot is a layup or a jump shot by where the player is at the release. If the
+// shot type changes before the feet leave the floor, the jump is planned again;
+// once in the air, the jump is what it is.
 // You can only shoot while dribbling: pressing Shoot gathers the ball into the
 // hands (PlayerDribbler), and it's released from the release point when you let go.
 // With a body (PlayerBody), the meter also lifts the ball from the chest to the
@@ -119,8 +125,10 @@ public class PlayerShooter : MonoBehaviour
     [SerializeField] private float _meterFillTime = 1f;
     [Tooltip("Middle of the green window on the meter (0 = bottom, 1 = top). The window grows and shrinks around this point, so it doesn't jump around.")]
     [SerializeField, Range(0f, 1f)] private float _greenCenter = 0.8f;
-    [Tooltip("Width of the green window (in meter units) by the player's distance from the rim (meters, along the floor). Wide up close, narrow from deep. Set when the shot starts and kept until the release.")]
+    [Tooltip("Width of the green window (in meter units) by the player's distance from the rim (meters, along the floor). Wide up close, narrow from deep. Worked out again every physics step while the meter fills, from where the player is now; the release is judged against the window for where the player lets go.")]
     [SerializeField] private AnimationCurve _greenWidthByDistance = AnimationCurve.EaseInOut(1.8f, 0.35f, 10f, 0.08f);
+    [Tooltip("While the meter fills, the window eases toward its new width over about this many seconds, so it doesn't flicker as the player moves. 0 = no easing. The release always uses the exact width for where the player is.")]
+    [SerializeField] private float _greenWidthSmoothTime = 0.1f;
 
     [Header("Misses (outside the green)")]
     [Tooltip("How far short or long the shot lands, in meters, per unit of meter missed. With 3, releasing 0.05 outside the green misses by 15 cm.")]
@@ -151,11 +159,21 @@ public class PlayerShooter : MonoBehaviour
     private float _groundSolesHeight;
     private bool _jumped;
 
+    // The green window while the meter fills (it follows the player).
+    private float _greenWidth;
+    private float _greenWidthVelocity;
+    private float _pressDistance;
+    private float _pressGreenWidth;
+    private bool _pressLayup;
+
     // Read by the shot meter (ShotMeterDisplay) and the arms (PlayerArms).
     public bool IsCharging { get; private set; }
     public float MeterFill => IsCharging ? Mathf.Clamp01((Time.time - _holdStartTime) / _meterFillTime) : LastReleaseFill;
     public float LastReleaseFill { get; private set; }
     public float LastReleaseTime { get; private set; } = float.NegativeInfinity;
+    // The last shot (for scoring and the debug overlay later).
+    public bool LastReleaseWasGreen { get; private set; }
+    public float LastLaunchAngle { get; private set; }
     public float GreenStart { get; private set; }
     public float GreenEnd { get; private set; }
 
@@ -204,7 +222,12 @@ public class PlayerShooter : MonoBehaviour
         bool facingHoop = IsCharging || Time.time - LastReleaseTime < _faceHoopAfterRelease;
         if (facingHoop && _movement != null && _rim != null) _movement.FaceDirection(ShotDirection, _turnToHoopSpeed);
 
-        if (!IsCharging || _body == null || _rim == null) return;
+        if (!IsCharging) return;
+        float distance = GetDistanceToRim();
+        UpdateGreenWindow(distance, Time.fixedDeltaTime);
+        UpdateShotType(distance);
+
+        if (_body == null || _rim == null) return;
 
         if (!_jumped && Time.time >= _takeoffTime)
         {
@@ -265,21 +288,58 @@ public class PlayerShooter : MonoBehaviour
         IsCharging = true;
         _holdStartTime = Time.time;
 
-        // The green window is sized once, when the shot starts, so it can't
-        // change under the player while they're timing the release.
-        float width = _greenWidthByDistance.Evaluate(GetDistanceToRim());
+        // The window starts at the size for where the player pressed Shoot,
+        // then follows them while the meter fills (UpdateGreenWindow).
+        _pressDistance = GetDistanceToRim();
+        _pressGreenWidth = _greenWidthByDistance.Evaluate(_pressDistance);
+        _greenWidthVelocity = 0f;
+        SetGreenWidth(_pressGreenWidth);
+
+        _chargingLayup = _pressDistance <= _layupRange;
+        _pressLayup = _chargingLayup;
+        if (_body != null && _ball != null && _rim != null) PlanJump();
+    }
+
+    // Moving away from the rim while the meter fills shrinks the window,
+    // moving in grows it. Eased so it doesn't flicker as the player moves.
+    private void UpdateGreenWindow(float distance, float deltaTime)
+    {
+        float target = _greenWidthByDistance.Evaluate(distance);
+        float width = _greenWidthSmoothTime > 0f
+            ? Mathf.SmoothDamp(_greenWidth, target, ref _greenWidthVelocity, _greenWidthSmoothTime, Mathf.Infinity, deltaTime)
+            : target;
+        SetGreenWidth(width);
+    }
+
+    // The window grows and shrinks around its middle, so it never jumps.
+    private void SetGreenWidth(float width)
+    {
+        _greenWidth = width;
         GreenStart = Mathf.Clamp01(_greenCenter - width / 2f);
         GreenEnd = Mathf.Clamp01(_greenCenter + width / 2f);
+    }
 
-        if (_body != null && _ball != null && _rim != null) PlanJump();
+    // Layup or jump shot goes by where the player is now. If that changes
+    // while the feet are still on the floor, the jump is planned again for the
+    // new shot (same timing: the top still comes at the middle of the green).
+    // Once in the air, the jump is what it is; only the release changes.
+    private void UpdateShotType(float distance)
+    {
+        bool layup = distance <= _layupRange;
+        if (layup == _chargingLayup) return;
+
+        _chargingLayup = layup;
+        bool replanned = !_jumped && _body != null && _ball != null && _rim != null;
+        if (replanned) PlanJump();
+        Debug.Log($"Shot changed to a {(layup ? "layup" : "jump shot")} at {distance:0.0} m from the rim{(replanned ? ", jump planned again" : " (already in the air, jump kept)")}");
     }
 
     // Works out how high to jump and when to leave the floor, so the top of
     // the jump comes at the middle of the green window, with the shooting
-    // hand able to reach the release point there.
+    // hand able to reach the release point there. Only called while the feet
+    // are still on the floor.
     private void PlanJump()
     {
-        _chargingLayup = GetDistanceToRim() <= _layupRange;
         _groundSolesHeight = _body.SolesHeight;
         _jumped = false;
 
@@ -324,17 +384,24 @@ public class PlayerShooter : MonoBehaviour
         if (!IsCharging) return;
 
         float fill = MeterFill;
+
+        // The release is judged by where the player lets go: the exact window
+        // for this distance (no easing), and layup or jump shot by this distance.
+        float distance = GetDistanceToRim();
+        SetGreenWidth(_greenWidthByDistance.Evaluate(distance));
+        _chargingLayup = distance <= _layupRange;
+
         IsCharging = false;
         LastReleaseFill = fill;
         LastReleaseTime = Time.time;
-        bool green = fill >= GreenStart && fill <= GreenEnd;
+        LastReleaseWasGreen = fill >= GreenStart && fill <= GreenEnd;
 
         // How far outside the green the release was: negative = early, positive = late, 0 = green.
         float timingError = 0f;
         if (fill < GreenStart) timingError = fill - GreenStart;
         else if (fill > GreenEnd) timingError = fill - GreenEnd;
 
-        Shoot(green, timingError);
+        Shoot(LastReleaseWasGreen, timingError);
     }
 
     private void Shoot(bool green, float timingError)
@@ -348,7 +415,8 @@ public class PlayerShooter : MonoBehaviour
         Vector3 rimToPlayer = transform.position - _rim.position;
         rimToPlayer.y = 0f;
         float distance = rimToPlayer.magnitude;
-        bool layup = distance <= _layupRange;
+        // Decided once, from the release position (Release), the same as the jump and the arm used.
+        bool layup = _chargingLayup;
 
         Vector3 release = _body != null ? GetHandRelease()
             : layup ? GetLayupRelease(rimToPlayer) : GetJumpShotRelease(rimToPlayer);
@@ -385,11 +453,13 @@ public class PlayerShooter : MonoBehaviour
             if (launchAngle >= 89f) return;
         }
 
+        LastLaunchAngle = launchAngle;
         _ball.Place(release);
         _ball.Launch(velocity, ShotMath.GetBackspin(aimPoint - release, layup ? _layupBackspin : _backspin));
 
         string shotType = layup ? (bank ? "Layup off the glass" : "Layup") : (bank ? "Bank jump shot" : "Jump shot");
-        Debug.Log($"{shotType}: {distance:0.0} m from the rim, {launchAngle:0.0} deg, green window {GreenEnd - GreenStart:0.00}, {(green ? "GREEN" : $"timing off by {timingError:+0.00;-0.00}")}");
+        string pressed = $"pressed at {_pressDistance:0.0} m (window {_pressGreenWidth:0.00}{(_pressLayup != layup ? $", {(_pressLayup ? "layup" : "jump shot")}" : "")})";
+        Debug.Log($"{shotType}: {distance:0.0} m from the rim, {launchAngle:0.0} deg, green window {GreenEnd - GreenStart:0.00}, {pressed}, {(green ? "GREEN" : $"timing off by {timingError:+0.00;-0.00}")}");
     }
 
     // The player's center to the rim center, along the floor, in meters.
