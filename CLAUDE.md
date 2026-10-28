@@ -123,7 +123,7 @@ Each step is meant to be one or a few small PRs. Check off as they land. Passing
 7. [x] Shooting: hold-and-release Square, shot meter/timing, a computed arc toward the rim with a make/miss window
    - [x] Layups inside 1.8 m: higher release, steeper arc, off the glass except straight on or along the baseline (dunks wait for animation)
    - [x] Green window sized by distance (wide up close, narrow from deep), following the player while the meter fills (layup or jump shot decided by where they let go); contested shots come later
-   - [ ] Court markings (3-point line, corners, paint) and `CourtGeometry` (2 or 3 from a floor point)
+   - [x] Court markings (NBA half court: 3-point line, corners, lane, circles, restricted area, lane marks) and `CourtGeometry` (2 or 3, in the paint, in bounds from a floor point); `CourtLineProbe` logs when the feet cross them
    - [ ] Made baskets and points (`ScoreKeeper`), plus a Shot Lab that measures make rates
    - [ ] A visible jump on every shot (minimum jump heights, dip before takeoff, limited air control)
    - [ ] Shots go in when they should: guaranteed uncontested greens, aim and miss-size tuning against the Shot Lab

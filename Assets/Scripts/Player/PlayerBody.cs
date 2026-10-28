@@ -250,6 +250,16 @@ public class PlayerBody : MonoBehaviour
         return PredictedRootPosition + _rigidbody.rotation * (hips + torso * new Vector3(0f, neckTop + _headRadius, 0f));
     }
 
+    // The middle of a foot, straight down on the floor (side: +1 = right, -1 = left),
+    // for court rules like "was that a 3?". The foot bone sits at the ankle and
+    // points toward the toes; the heel sticks out a little behind it.
+    public Vector3 GetFootOnFloor(int side)
+    {
+        int foot = (int)(side > 0 ? Bone.RightFoot : Bone.LeftFoot);
+        Vector3 center = _position[foot] + _rotation[foot] * new Vector3(0f, _footSize.x / 2f - _footSize.z, 0f);
+        return new Vector3(center.x, 0f, center.z);
+    }
+
     // The relaxed hand pose, hanging at the side: where the palm is, where the
     // fingers point and which way the palm faces. PlayerArms blends to it.
     public void GetRelaxedHand(int side, out Vector3 palmPoint, out Vector3 fingerDirection, out Vector3 palmDirection, out Vector3 elbowHint)
