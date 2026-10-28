@@ -13,6 +13,8 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private Transform _cameraTransform;
     [Tooltip("A jump only starts with the floor within this distance below the capsule, in meters.")]
     [SerializeField] private float _groundCheckDistance = 0.1f;
+    [Tooltip("After an explosive dribble move's footwork, acceleration is multiplied by this (0-1) for the recovery time the move asks for, so explosive moves can't be chained for free.")]
+    [SerializeField, Range(0f, 1f)] private float _recoveryAcceleration = 0.4f;
 
     private Rigidbody _rigidbody;
     private float _capsuleHalfHeight = 1f;
@@ -30,6 +32,11 @@ public class PlayerMovement : MonoBehaviour
     private Vector3 _burstStart;
     private float _burstDistance;
     private Vector3 _burstLocalDirection;
+    private float _burstKeepSpeed;
+    private Vector3 _burstMomentum;
+    private float _burstStartTime;
+    private float _burstRecoveryTime;
+    private float _recoveryUntil = float.NegativeInfinity;
 
     // Current speed along the floor in m/s (for the debug overlay later).
     public float CurrentSpeed { get; private set; }
@@ -57,8 +64,14 @@ public class PlayerMovement : MonoBehaviour
     // relative to the way they face (x = their right, z = their forward), like
     // the hop of a stepback. It overrides the stick for that time and the body
     // keeps facing the same way (a spin still turns it); then the stick takes
-    // over again from a standstill. A new burst replaces one that's going.
-    public void Burst(Vector3 localDirection, float distance, float seconds)
+    // over again. keepSpeed is the fraction (0-1) of the burst's speed kept as
+    // it ends: 0 lands a hop, 1 carries on (the stick then eases it to its own
+    // speed). For recoveryTime seconds after it ends, acceleration is reduced.
+    // keepMomentum: the player keeps moving as they were and the burst is added
+    // on top (a crossover on a drive shifts sideways without losing the drive);
+    // without it the burst replaces their movement (a stepback stops the drive).
+    // A new burst replaces one that's going.
+    public void Burst(Vector3 localDirection, float distance, float seconds, float keepSpeed = 0f, float recoveryTime = 0f, bool keepMomentum = false)
     {
         localDirection.y = 0f;
         if (localDirection.sqrMagnitude < 0.0001f || distance <= 0f) return;
@@ -67,8 +80,14 @@ public class PlayerMovement : MonoBehaviour
         _burstLocalDirection = localDirection.normalized;
         _burstVelocity = _rigidbody.rotation * _burstLocalDirection * (distance / Mathf.Max(seconds, 0.01f));
         _burstUntil = Time.time + seconds;
+        _burstStartTime = Time.time;
         _burstStart = _rigidbody.position;
+        Vector3 floorVelocity = _rigidbody.linearVelocity;
+        floorVelocity.y = 0f;
+        _burstMomentum = keepMomentum ? floorVelocity : Vector3.zero;
         _burstDistance = distance;
+        _burstKeepSpeed = Mathf.Clamp01(keepSpeed);
+        _burstRecoveryTime = recoveryTime;
         _bursting = true;
     }
 
@@ -196,6 +215,8 @@ public class PlayerMovement : MonoBehaviour
                 direction = Vector3.RotateTowards(direction, stickDirection, maxRadians, 0f);
 
                 float rate = targetSpeed > speed ? _config.Acceleration : _config.Deceleration;
+                // Just after an explosive move, speeding up is slower for a moment.
+                if (targetSpeed > speed && Time.time < _recoveryUntil) rate *= _recoveryAcceleration;
                 speed = Mathf.MoveTowards(speed, targetSpeed, rate * dt);
             }
         }
@@ -242,25 +263,35 @@ public class PlayerMovement : MonoBehaviour
     // says, and only a spin turns the body.
     private void BurstStep(float dt)
     {
+        Vector3 floorVelocity = _burstMomentum + _burstVelocity;
         Vector3 velocity = _rigidbody.linearVelocity;
-        _rigidbody.linearVelocity = new Vector3(_burstVelocity.x, velocity.y, _burstVelocity.z);
-        CurrentSpeed = _burstVelocity.magnitude;
+        _rigidbody.linearVelocity = new Vector3(floorVelocity.x, velocity.y, floorVelocity.z);
+        CurrentSpeed = floorVelocity.magnitude;
         IsPlanting = false;
         _hasFacingOverride = false;
         TurnSpin(dt);
     }
 
-    // A burst lands: the player stops along the floor and the stick takes over again.
+    // A burst ends: the player keeps the part of its speed it asked for (a hop
+    // lands with none), and the stick takes over again.
     private void EndBurst()
     {
         _bursting = false;
+        // How far the burst itself moved the player: the distance along its
+        // direction, minus what the kept momentum would have covered anyway.
         Vector3 moved = _rigidbody.position - _burstStart;
         moved.y = 0f;
-        Debug.Log($"Burst: moved {moved.magnitude:0.00} m of {_burstDistance:0.00} m, toward (right {_burstLocalDirection.x:0.00}, forward {_burstLocalDirection.z:0.00}) of the body.");
+        Vector3 direction = _burstVelocity.normalized;
+        float elapsed = Time.time - _burstStartTime;
+        float burstMoved = Vector3.Dot(moved, direction) - Vector3.Dot(_burstMomentum, direction) * elapsed;
+        string momentum = _burstMomentum.sqrMagnitude > 0.01f ? $", on top of {_burstMomentum.magnitude:0.0} m/s of running" : "";
+        Debug.Log($"Burst: moved {burstMoved:0.00} m of {_burstDistance:0.00} m in {elapsed:0.00} s, toward (right {_burstLocalDirection.x:0.00}, forward {_burstLocalDirection.z:0.00}) of the body{momentum}.");
 
+        Vector3 kept = _burstMomentum + _burstVelocity * _burstKeepSpeed;
         Vector3 velocity = _rigidbody.linearVelocity;
-        _rigidbody.linearVelocity = new Vector3(0f, velocity.y, 0f);
-        CurrentSpeed = 0f;
+        _rigidbody.linearVelocity = new Vector3(kept.x, velocity.y, kept.z);
+        CurrentSpeed = kept.magnitude;
+        _recoveryUntil = Time.time + _burstRecoveryTime;
     }
 
     // Converts the 2D stick into a flat 3D direction on the court

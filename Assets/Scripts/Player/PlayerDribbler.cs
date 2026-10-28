@@ -23,8 +23,14 @@ using UnityEngine;
 //       flick back diagonally toward the other hand = behind the back (bounce behind the body)
 //       flick back diagonally toward the ball hand  = stepback to the ball side (hop back and out)
 //       roll the stick through a half circle        = spin move (body spins, ends in the other hand)
-//     Footwork (hops, slowdowns) goes by the player's body, not the stick: a
-//     stepback always hops the way the player's back faces.
+//     Holding R2 as the flick is recognized makes it the explosive version:
+//     quicker, and the player travels farther (crossover ~1 m sideways, stepback
+//     ~1 m back, a burst forward after a hesitation's stop, a spin that keeps
+//     going). With R2, toward the other hand is a side step (hop away from the
+//     ball hand, ball carried along) instead of between the legs. A short
+//     recovery afterwards keeps them from being chained for free.
+//     Footwork (hops, shifts, slowdowns) goes by the player's body, not the
+//     stick: a stepback always hops the way the player's back faces.
 //   - if the ball gets knocked too far away (say it hits the pole), the dribble is lost
 // A move starts as soon as the hand can get to the ball (on its way down or
 // back up), and a new flick interrupts the move that's going: the ball heads
@@ -42,7 +48,7 @@ using UnityEngine;
 public class PlayerDribbler : MonoBehaviour
 {
     private enum State { Loose, Dribbling, Fumbling, Holding }
-    private enum Move { None, Crossover, BetweenTheLegs, BehindTheBack, Hesitation, Stepback, StepbackBallSide, Spin }
+    private enum Move { None, Crossover, BetweenTheLegs, BehindTheBack, Hesitation, Stepback, StepbackBallSide, SideStep, Spin }
 
     [SerializeField] private PlayerInputReader _input;
     [Tooltip("Hesitations, stepbacks and spin moves slow down, hop and turn the player through this.")]
@@ -118,10 +124,10 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _moveBufferTime = 0.4f;
     [Tooltip("A fumbled ball can be caught again when it's within this distance below the hand height, in meters (and within the catch radius). Also how far below a low dribble's hand height the hand reaches down to start a move.")]
     [SerializeField] private float _handReach = 0.3f;
-    [Tooltip("How fast the hand pushes the ball down to start a move, in m/s. With the catch height below, 5 makes a move about 0.3 s from push to catch. Below about 3, it won't come back up to the hand.")]
-    [SerializeField] private float _movePushSpeed = 5f;
-    [Tooltip("At the end of a move, the hand takes the ball when it comes up to this height (meters, ball center), then dribbles on at the normal height.")]
-    [SerializeField] private float _moveCatchHeight = 0.8f;
+    [Tooltip("How fast the hand pushes the ball down to start a move, in m/s (x = normal, y = explosive with R2). With the catch height below, 5 makes a move about 0.3 s from push to catch and 6.5 about 0.2 s. Below about 3, it won't come back up to the hand.")]
+    [SerializeField] private Vector2 _movePushSpeed = new Vector2(5f, 6.5f);
+    [Tooltip("At the end of a move, the hand takes the ball when it comes up to this height (meters, ball center; x = normal, y = explosive), then dribbles on at the normal height. Explosive moves are caught lower: harder and quicker.")]
+    [SerializeField] private Vector2 _moveCatchHeight = new Vector2(0.8f, 0.7f);
     [Tooltip("Crossover: how far in front of the hands the ball bounces, in meters (halfway between them, side to side).")]
     [SerializeField] private float _crossoverBounceAhead = 0.2f;
     [Tooltip("Between the legs: how far in front of the player's center the ball bounces, in meters (0 = right under the body).")]
@@ -134,16 +140,40 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _hesitationTime = 0.35f;
     [Tooltip("Stepback: the ball is yanked back on one bounce to this far behind where the hand usually dribbles it (meters), beside the feet.")]
     [SerializeField] private float _stepbackPullBack = 0.4f;
-    [Tooltip("Stepback: how hard the hand pushes the ball down, in m/s. Harder than other moves, so it's a quick yank.")]
-    [SerializeField] private float _stepbackPushSpeed = 6f;
-    [Tooltip("Stepback: how far the player hops straight back (away from the way they face), in meters.")]
-    [SerializeField] private float _stepbackHop = 0.6f;
-    [Tooltip("Stepback: seconds the hop takes.")]
-    [SerializeField] private float _stepbackHopTime = 0.2f;
+    [Tooltip("Stepback: how hard the hand pushes the ball down, in m/s (x = normal, y = explosive). Harder than other moves, so it's a quick yank.")]
+    [SerializeField] private Vector2 _stepbackPushSpeed = new Vector2(6f, 7f);
     [Tooltip("Stepback to the ball side: degrees the hop turns out from straight back, toward the ball hand.")]
     [SerializeField] private float _stepbackBallSideAngle = 45f;
-    [Tooltip("Spin move: seconds for the body's full turn.")]
-    [SerializeField] private float _spinTime = 0.45f;
+    [Tooltip("Spin move: seconds for the body's full turn (x = normal, y = explosive).")]
+    [SerializeField] private Vector2 _spinTime = new Vector2(0.45f, 0.3f);
+
+    [Header("Dribble moves: footwork (x = normal, y = explosive with R2)")]
+    [Tooltip("R2 pressed at least this far (0-1) when a flick is recognized makes it the explosive version.")]
+    [SerializeField, Range(0f, 1f)] private float _explosiveTrigger = 0.5f;
+    [Tooltip("Seconds a footwork hop or shift takes (stepbacks, crossover, side step, behind the back).")]
+    [SerializeField] private Vector2 _footworkTime = new Vector2(0.25f, 0.2f);
+    [Tooltip("Crossover: meters the player shifts sideways toward the new ball hand.")]
+    [SerializeField] private Vector2 _crossoverShift = new Vector2(0.2f, 1f);
+    [Tooltip("Crossover: how much the shift also goes forward (0 = straight sideways, 1 = 45 degrees forward).")]
+    [SerializeField, Range(0f, 1f)] private float _crossoverShiftForward = 0.3f;
+    [Tooltip("Between the legs (normal only; with R2 it's the side step): meters the player shifts toward the new ball hand.")]
+    [SerializeField] private float _betweenTheLegsShift = 0f;
+    [Tooltip("Side step (R2 only): meters the player hops sideways, toward the side away from the ball hand. The ball stays in its hand and comes along.")]
+    [SerializeField] private float _sideStepHop = 1.1f;
+    [Tooltip("Stepbacks: meters the player hops back (straight back, or back and out to the ball side), still facing forward.")]
+    [SerializeField] private Vector2 _stepbackHop = new Vector2(0.6f, 1f);
+    [Tooltip("Behind the back: meters the player shifts sideways toward the new ball hand.")]
+    [SerializeField] private Vector2 _behindTheBackShift = new Vector2(0f, 0.8f);
+    [Tooltip("Explosive hesitation: the top speed is multiplied by this (0-1) for the stop, almost a full stop.")]
+    [SerializeField, Range(0f, 1f)] private float _explosiveHesitationSpeed = 0.05f;
+    [Tooltip("Explosive hesitation: seconds of the stop before the burst forward.")]
+    [SerializeField] private float _explosiveHesitationStop = 0.2f;
+    [Tooltip("Explosive hesitation: meters of the burst forward, over the explosive footwork time (1.4 m in 0.2 s is 7 m/s, above run speed). The player keeps that speed as it ends and eases back to the stick's speed.")]
+    [SerializeField] private float _hesitationBurst = 1.4f;
+    [Tooltip("Explosive spin: meters the player keeps going the way they were moving during the spin (forward if standing). Keeps that speed as it ends.")]
+    [SerializeField] private float _explosiveSpinCarry = 1.5f;
+    [Tooltip("After an explosive move's footwork, seconds of reduced acceleration (see PlayerMovement's recovery acceleration), so they can't be chained for free.")]
+    [SerializeField] private float _explosiveRecoveryTime = 0.15f;
     [Tooltip("Spin move: how far in front of the player (as they were facing when the spin started) the ball bounces, in meters.")]
     [SerializeField] private float _spinBounceForward = 0.3f;
     [Tooltip("Spin move: how far the right stick has to be rolled around, in degrees, while pushed out.")]
@@ -196,9 +226,12 @@ public class PlayerDribbler : MonoBehaviour
     private float _moveStartTime;
     private float _moveFlickTime;
     private int _moveGesture;
+    private bool _moveExplosive;
     private Move _requestedMove = Move.None;
     private float _requestedTime;
     private int _requestedGesture;
+    private bool _requestedExplosive;
+    private float _hesitationBurstAt = float.PositiveInfinity;
     private Quaternion _moveStartRotation;
     private float _lastYaw;
     private float _turnRate;
@@ -354,7 +387,8 @@ public class PlayerDribbler : MonoBehaviour
         GetDribbleHeightAndPush(out float handHeight, out float pushSpeed);
         KeepBallAwayFromDefense();
         // At the end of a move the hand takes the ball at the catch height.
-        if (_move != Move.None) handHeight = _moveCatchHeight;
+        if (_move != Move.None) handHeight = Pick(_moveCatchHeight);
+        StartHesitationBurst();
         _currentHandHeight = handHeight;
 
         // A flick that waited too long for the hand to get to the ball is dropped.
@@ -481,7 +515,8 @@ public class PlayerDribbler : MonoBehaviour
             case Move.BehindTheBack:
                 return _body.position + _body.rotation * new Vector3(0f, 0f, -_behindTheBackBounceDistance);
             case Move.Hesitation:
-                // Same hand: just a quick bounce while the feet stop.
+            case Move.SideStep:
+                // Same hand: just a quick bounce while the feet stop or hop.
                 return HandPoint();
             case Move.Stepback:
             case Move.StepbackBallSide:
@@ -554,12 +589,14 @@ public class PlayerDribbler : MonoBehaviour
         }
     }
 
+    // R2 is read at the moment the flick is recognized.
     private void OnFlick(Vector2 stick)
     {
-        Move move = GetFlickMove(stick);
+        bool explosive = _input.Sprint >= _explosiveTrigger;
+        Move move = GetFlickMove(stick, explosive);
         float stickAngle = Mathf.Atan2(stick.x, stick.y) * Mathf.Rad2Deg;
-        Debug.Log($"Flick: stick at {stickAngle:0} deg (0 = up, 90 = right), ball in the {HandName(_hand)} hand: {move}.");
-        RequestMove(move, _gesture);
+        Debug.Log($"Flick: stick at {stickAngle:0} deg (0 = up, 90 = right), ball in the {HandName(_hand)} hand: {MoveName(move, explosive)}.");
+        RequestMove(move, _gesture, explosive);
     }
 
     // The stick kept rolling into a spin. If the flick that started the roll has
@@ -568,25 +605,24 @@ public class PlayerDribbler : MonoBehaviour
     // that pushed it, and any footwork the flick started stops.
     private void OnSpinRoll()
     {
+        bool explosive = _input.Sprint >= _explosiveTrigger;
         if (_move != Move.None && _move != Move.Spin && _moveGesture == _gesture)
         {
-            Debug.Log($"Dribble move {_move} turned into a Spin (the stick kept rolling).");
+            Debug.Log($"Dribble move {MoveName(_move, _moveExplosive)} turned into a {MoveName(Move.Spin, explosive)} (the stick kept rolling).");
             _move = Move.Spin;
+            _moveExplosive = explosive;
             _hand = -_pushHand;
-            if (_movement != null)
-            {
-                _movement.CancelMoveFootwork();
-                _movement.Spin(-360f * _pushHand, _spinTime);
-            }
+            StartFootwork();
             return;
         }
-        Debug.Log("Stick roll: Spin.");
-        RequestMove(Move.Spin, _gesture);
+        Debug.Log($"Stick roll: {MoveName(Move.Spin, explosive)}.");
+        RequestMove(Move.Spin, _gesture, explosive);
     }
 
     // Which move a flick is. The stick's directions are fixed (up is always up),
-    // with left and right read against the hand that has the ball.
-    private Move GetFlickMove(Vector2 stick)
+    // with left and right read against the hand that has the ball. With R2,
+    // toward the other hand is the side step instead of between the legs.
+    private Move GetFlickMove(Vector2 stick, bool explosive)
     {
         // 0 = up, +90 = toward the ball hand, -90 = toward the other hand, 180 = down.
         float angle = Mathf.Atan2(stick.x * _hand, stick.y) * Mathf.Rad2Deg;
@@ -600,18 +636,23 @@ public class PlayerDribbler : MonoBehaviour
 
         if (fromUp >= downStart) return Move.Stepback;
         if (fromUp >= backDiagonalStart) return towardBallHand ? Move.StepbackBallSide : Move.BehindTheBack;
-        if (fromUp > frontSplit) return towardBallHand ? Move.Hesitation : Move.BetweenTheLegs;
+        if (fromUp > frontSplit)
+        {
+            if (towardBallHand) return Move.Hesitation;
+            return explosive ? Move.SideStep : Move.BetweenTheLegs;
+        }
         return Move.Crossover;
     }
 
     // Asks for a move. It starts as soon as the hand can get to the ball (see
     // Dribble). A newer request replaces one that's still waiting. The gesture
     // is the stick push it came from (-1 for none).
-    private void RequestMove(Move move, int gesture)
+    private void RequestMove(Move move, int gesture, bool explosive)
     {
         _requestedMove = move;
         _requestedTime = Time.time;
         _requestedGesture = gesture;
+        _requestedExplosive = explosive;
     }
 
     // The hand can push the ball to start a move: it's high enough (on its way
@@ -636,47 +677,104 @@ public class PlayerDribbler : MonoBehaviour
         _moveStartTime = Time.time;
         _moveFlickTime = _requestedTime;
         _moveGesture = _requestedGesture;
+        _moveExplosive = _requestedExplosive;
         _moveStartRotation = _body.rotation;
         _pushHand = _hand;
-
-        // Footwork goes by the player's body: x = their right, z = their forward.
-        if (_movement != null)
-        {
-            _movement.CancelMoveFootwork();
-            switch (_move)
-            {
-                case Move.Hesitation:
-                    _movement.SlowDown(_hesitationSpeed, _hesitationTime);
-                    break;
-                case Move.Stepback:
-                    _movement.Burst(Vector3.back, _stepbackHop, _stepbackHopTime);
-                    break;
-                case Move.StepbackBallSide:
-                    float radians = _stepbackBallSideAngle * Mathf.Deg2Rad;
-                    _movement.Burst(new Vector3(Mathf.Sin(radians) * _pushHand, 0f, -Mathf.Cos(radians)), _stepbackHop, _stepbackHopTime);
-                    break;
-                case Move.Spin:
-                    // A spin turns away from the ball's side (right hand = spin to the left).
-                    _movement.Spin(-360f * _pushHand, _spinTime);
-                    break;
-            }
-        }
 
         // These moves end in the other hand; the rest stay in the same hand.
         if (_move == Move.Crossover || _move == Move.BetweenTheLegs || _move == Move.BehindTheBack || _move == Move.Spin)
         {
             _hand = -_hand;
         }
+        StartFootwork();
 
-        float push = _move == Move.Stepback || _move == Move.StepbackBallSide ? _stepbackPushSpeed : _movePushSpeed;
+        float push = Pick(_move == Move.Stepback || _move == Move.StepbackBallSide ? _stepbackPushSpeed : _movePushSpeed);
         // On its way down, the ball keeps whichever is faster: its own speed or the push.
         float newVertical = Mathf.Min(vertical, -push);
 
         string interrupt = interrupted != Move.None ? $", interrupting {interrupted} {interruptedAge:0.00} s in" : "";
-        Debug.Log($"Dribble move: {_move}, {HandName(_pushHand)} hand to {HandName(_hand)}, started {Time.time - _moveFlickTime:0.00} s after the flick{interrupt}.");
+        Debug.Log($"Dribble move: {MoveName(_move, _moveExplosive)}, {HandName(_pushHand)} hand to {HandName(_hand)}, started {Time.time - _moveFlickTime:0.00} s after the flick{interrupt}.");
 
         if (interrupted != Move.None) CheckRedirect(ballPosition, newVertical);
         return newVertical;
+    }
+
+    // The move's footwork, which goes by the player's body, not the stick: x =
+    // their right, z = their forward. Whatever footwork the last move started
+    // stops first. Explosive (R2) footwork travels farther and quicker, with a
+    // short recovery afterwards. Sideways moves keep the player's running speed
+    // and add their shift on top; stepbacks replace it. _pushHand is the hand
+    // the ball started in and _hand the one it ends in.
+    private void StartFootwork()
+    {
+        _hesitationBurstAt = float.PositiveInfinity;
+        if (_movement == null) return;
+        _movement.CancelMoveFootwork();
+
+        float time = Pick(_footworkTime);
+        float recovery = _moveExplosive ? _explosiveRecoveryTime : 0f;
+        switch (_move)
+        {
+            case Move.Crossover:
+                // Sideways toward the new ball hand, a little forward.
+                _movement.Burst(new Vector3(_hand, 0f, _crossoverShiftForward), Pick(_crossoverShift), time, 0f, recovery, true);
+                break;
+            case Move.BetweenTheLegs:
+                _movement.Burst(new Vector3(_hand, 0f, 0f), _betweenTheLegsShift, time, 0f, 0f, true);
+                break;
+            case Move.SideStep:
+                // A hop toward the side away from the ball hand; the ball comes along.
+                _movement.Burst(new Vector3(-_pushHand, 0f, 0f), _sideStepHop, time, 0f, recovery, true);
+                break;
+            case Move.BehindTheBack:
+                _movement.Burst(new Vector3(_hand, 0f, 0f), Pick(_behindTheBackShift), time, 0f, recovery, true);
+                break;
+            case Move.Stepback:
+                // Straight back, still facing forward.
+                _movement.Burst(Vector3.back, Pick(_stepbackHop), time, 0f, recovery);
+                break;
+            case Move.StepbackBallSide:
+                float radians = _stepbackBallSideAngle * Mathf.Deg2Rad;
+                _movement.Burst(new Vector3(Mathf.Sin(radians) * _pushHand, 0f, -Mathf.Cos(radians)), Pick(_stepbackHop), time, 0f, recovery);
+                break;
+            case Move.Hesitation:
+                if (_moveExplosive)
+                {
+                    // Almost a full stop, then a burst forward (started in Dribble).
+                    _movement.SlowDown(_explosiveHesitationSpeed, _explosiveHesitationStop);
+                    _hesitationBurstAt = Time.time + _explosiveHesitationStop;
+                }
+                else
+                {
+                    _movement.SlowDown(_hesitationSpeed, _hesitationTime);
+                }
+                break;
+            case Move.Spin:
+                // A spin turns away from the ball's side (right hand = spin to the left).
+                float spinTime = Pick(_spinTime);
+                _movement.Spin(-360f * _pushHand, spinTime);
+                if (_moveExplosive)
+                {
+                    // Keeps going the way the player was moving (forward if standing),
+                    // in the body's frame as it was when the spin started.
+                    Vector3 moving = _body.linearVelocity;
+                    moving.y = 0f;
+                    Vector3 local = moving.magnitude > 0.5f ? Quaternion.Inverse(_body.rotation) * moving : Vector3.forward;
+                    _movement.Burst(local, _explosiveSpinCarry, spinTime, 1f, recovery);
+                }
+                break;
+        }
+    }
+
+    // A value with a normal (x) and an explosive (y) version, for the current move.
+    private float Pick(Vector2 normalAndExplosive)
+    {
+        return _moveExplosive ? normalAndExplosive.y : normalAndExplosive.x;
+    }
+
+    private static string MoveName(Move move, bool explosive)
+    {
+        return explosive ? $"Explosive {move}" : move.ToString();
     }
 
     // An interrupting move turns the ball from wherever the last move was
@@ -705,6 +803,16 @@ public class PlayerDribbler : MonoBehaviour
         return hand > 0 ? "right" : "left";
     }
 
+    // An explosive hesitation bursts forward once its stop is over, unless
+    // another move has taken over since.
+    private void StartHesitationBurst()
+    {
+        if (Time.time < _hesitationBurstAt) return;
+        _hesitationBurstAt = float.PositiveInfinity;
+        if (_move != Move.Hesitation || _movement == null) return;
+        _movement.Burst(Vector3.forward, _hesitationBurst, _footworkTime.y, 1f, _explosiveRecoveryTime);
+    }
+
     // While protecting, if the ball is on the side facing the hoop (later: the
     // defender), cross it over to the other hand.
     private void KeepBallAwayFromDefense()
@@ -713,7 +821,7 @@ public class PlayerDribbler : MonoBehaviour
 
         Vector3 local = Quaternion.Inverse(_body.rotation) * (_protectFrom.position - _body.position);
         // Only when the hoop is clearly off to one side; straight ahead either hand is fine.
-        if (Mathf.Abs(local.x) > 0.5f && Mathf.Sign(local.x) == _hand) RequestMove(Move.Crossover, -1);
+        if (Mathf.Abs(local.x) > 0.5f && Mathf.Sign(local.x) == _hand) RequestMove(Move.Crossover, -1, false);
     }
 
     // The hand stops guiding the ball: it flies on with whatever speed it has.
@@ -725,6 +833,7 @@ public class PlayerDribbler : MonoBehaviour
         Debug.Log($"{reason} Speed {speed.magnitude:0.0} m/s, sprint {_input.Sprint:0.00}, turning {_turnRate:0} deg/s{move}.");
         _move = Move.None;
         _requestedMove = Move.None;
+        _hesitationBurstAt = float.PositiveInfinity;
         _fumbleStartTime = Time.time;
         _state = State.Fumbling;
     }
@@ -824,6 +933,7 @@ public class PlayerDribbler : MonoBehaviour
         _wasRising = false;
         _move = Move.None;
         _requestedMove = Move.None;
+        _hesitationBurstAt = float.PositiveInfinity;
         _hasCarryTarget = false;
         _passThroughUntil = float.NegativeInfinity;
         // While the player has the ball, it passes through their capsule and body

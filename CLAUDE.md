@@ -73,17 +73,17 @@ If a task tempts you toward out-of-scope work, stop and ask first.
 | L1 / R1 | Call screen / call play | Double team / call play |
 | Options | Pause | Pause |
 
-Dribble moves (right-stick flicks while dribbling). The stick's directions are fixed on the screen, whichever way the player or camera faces; "ball hand" means the stick side of the hand with the ball (right while it's in the right hand). Footwork goes by the player's body (a stepback always hops the way their back faces).
+Dribble moves (right-stick flicks while dribbling). The stick's directions are fixed on the screen, whichever way the player or camera faces; "ball hand" means the stick side of the hand with the ball (right while it's in the right hand). Footwork goes by the player's body (a stepback always hops the way their back faces). Holding R2 as the flick is recognized gives the explosive version: quicker, and the player travels farther.
 
-| Right-stick flick | Move |
-|---|---|
-| Up | Crossover |
-| Toward the ball hand | Hesitation |
-| Toward the other hand | Between the legs |
-| Down | Stepback (hop back) |
-| Back diagonal, toward the other hand | Behind the back |
-| Back diagonal, toward the ball hand | Stepback to the ball side |
-| Half-circle roll | Spin |
+| Right-stick flick | No R2 | R2 held (explosive) |
+|---|---|---|
+| Up | Crossover | Explosive crossover (~1 m sideways) |
+| Toward the ball hand | Hesitation | Explosive hesitation (stop, then burst forward) |
+| Toward the other hand | Between the legs | Side step (hop ~1.1 m away from the ball hand) |
+| Down | Stepback (hop back ~0.6 m) | Explosive stepback (~1 m) |
+| Back diagonal, toward the other hand | Behind the back | Explosive behind the back (~0.8 m sideways) |
+| Back diagonal, toward the ball hand | Stepback to the ball side | Explosive stepback to the ball side |
+| Half-circle roll | Spin | Explosive spin (quicker, keeps going) |
 
 ## Physics conventions
 
@@ -132,7 +132,7 @@ Each step is meant to be one or a few small PRs. Check off as they land. Passing
    - [x] Dribble loop, dribble hand (left/right), crossover (right-stick flick), pound dribble standing still, protect on L2, fumbles
    - [x] Between the legs, behind the back, hesitation, spin move (stick roll)
    - [x] Fixed stick directions (see the table above), stepbacks with a hop (`PlayerMovement.Burst`), moves start as soon as the hand can reach the ball and a new flick interrupts the move that's going
-   - [ ] R2 explosive versions, with footwork for every move
+   - [x] R2 explosive versions, with footwork for every move (sideways moves keep the running speed, stepbacks stop it) and a short recovery after each
    - [ ] Later: picking up the dribble ends it (double dribble rule)
 7. [x] Shooting: hold-and-release Square, shot meter/timing, a computed arc toward the rim with a make/miss window
    - [x] Layups inside 1.8 m: higher release, steeper arc, off the glass except straight on or along the baseline (dunks wait for animation)
