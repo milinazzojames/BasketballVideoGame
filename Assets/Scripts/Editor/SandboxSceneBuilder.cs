@@ -18,16 +18,16 @@ public static class SandboxSceneBuilder
     private const string MovementConfigPath = "Assets/Settings/PlayerMovementConfig.asset";
     private const string PhysicsMaterialFolder = "Assets/Settings";
 
-    // Real-world dimensions in meters (see CLAUDE.md).
-    private const float CourtWidth = 15.24f;
-    private const float HalfCourtLength = 14.325f;     // half of 28.65 m
+    // Real-world dimensions in meters (see CLAUDE.md). The court, its lines and
+    // where the rim sits come from CourtGeometry, so the rules use the same numbers.
+    private const float CourtWidth = CourtGeometry.CourtWidth;
+    private const float HalfCourtLength = CourtGeometry.HalfCourtLength;
     private const float Runoff = 2f;                   // floor beyond the lines, so things don't fall off the edge
-    private const float BaselineToBoard = 1.22f;       // backboard face is 4 ft inside the baseline
-    private const float FreeThrowToBoard = 4.57f;
+    private const float BaselineToBoard = CourtGeometry.BaselineToBoard;
+    private const float FreeThrowToBoard = CourtGeometry.FreeThrowToBoard;
     private const float RimHeight = 3.048f;            // exactly 10 ft, measured to the top of the rim
-    private const float RimInnerRadius = 0.2285f;      // 0.457 m inner diameter
+    private const float RimInnerRadius = CourtGeometry.RimInnerRadius;
     private const float RimTubeRadius = 0.008f;        // the rim is a ~16 mm steel rod
-    private const float RimToBoardGap = 0.15f;         // board face to the rim's nearest inner edge
     private const int RimSegments = 24;                // more segments = rounder collision ring
     private const float BoardWidth = 1.83f;
     private const float BoardHeight = 1.07f;
@@ -39,12 +39,16 @@ public static class SandboxSceneBuilder
     private const int NetColumns = 12;                 // strands around the rim
     private const int NetRows = 4;                     // rows of diamonds top to bottom
     private const float NetStrandWidth = 0.008f;
-    private const float LineWidth = 0.05f;
+    private const float LineWidth = CourtGeometry.LineWidth;
+    // Arcs are drawn as short straight pieces (more pieces = rounder).
+    private const int ThreePointArcSegments = 64;      // pieces along the 3-point arc, ~0.27 m each
+    private const int HalfCircleSegments = 32;         // pieces per solid half circle
+    private const int DashedHalfCircleSegments = 16;   // pieces per dashed half circle, every other one drawn
 
     // Stand-in player: a capsule the size of a 6'6" (1.98 m) player.
     private const float PlayerHeight = 1.98f;
     private const float PlayerRadius = 0.4f;
-    private const float PlayerStartZ = 4f;             // a bit beyond the 3-point line, facing the hoop
+    private const float PlayerStartZ = 4f;             // 8.7 m from the basket, about 1.5 m behind the 3-point line, facing the hoop
     private const float PlayerMass = 98f;              // about 215 lb
     // Body parts against the ball: averaged with the ball's 0.85, a ball off an
     // arm or chest bounces about (0.85 + 0.2) / 2 = 0.53, deader than off the floor.
@@ -135,16 +139,122 @@ public static class SandboxSceneBuilder
         floor.GetComponent<Collider>().sharedMaterial =
             GetPhysicsMaterial("FloorPhysics", FloorBounce, FloorFriction, PhysicsMaterialCombine.Average);
 
-        // Painted lines are visual only (no colliders), raised 1 mm to avoid flickering against the floor.
-        Material lineMat = GetMaterial("Lines", Color.white);
-        const float lineY = 0.001f;
-        float boardFaceZ = HalfCourtLength - BaselineToBoard;
+        BuildCourtLines(court);
+    }
 
-        CreateLine("Baseline", court, new Vector3(0f, lineY, HalfCourtLength), new Vector3(CourtWidth, 0.002f, LineWidth), lineMat);
-        CreateLine("HalfCourtLine", court, new Vector3(0f, lineY, 0f), new Vector3(CourtWidth, 0.002f, LineWidth), lineMat);
-        CreateLine("SidelineLeft", court, new Vector3(-CourtWidth / 2f, lineY, HalfCourtLength / 2f), new Vector3(LineWidth, 0.002f, HalfCourtLength), lineMat);
-        CreateLine("SidelineRight", court, new Vector3(CourtWidth / 2f, lineY, HalfCourtLength / 2f), new Vector3(LineWidth, 0.002f, HalfCourtLength), lineMat);
-        CreateLine("FreeThrowLine", court, new Vector3(0f, lineY, boardFaceZ - FreeThrowToBoard), new Vector3(3.66f, 0.002f, LineWidth), lineMat);
+    // NBA half-court markings, all measured with CourtGeometry's numbers. Each
+    // line is given by its centerline; radii are to a line's outer edge, so the
+    // centerline sits half a line width inside. The boundary lines sit just
+    // inside the court's outer size, so their outside edge is the boundary.
+    // Arc angles are in degrees from +X (the right sideline) toward +Z (the
+    // baseline): -90 points at half court, 0 to 180 sweeps toward the baseline.
+    private static void BuildCourtLines(Transform court)
+    {
+        Transform lines = new GameObject("Lines").transform;
+        lines.SetParent(court, false);
+        Material lineMat = GetMaterial("Lines", Color.white);
+
+        const float half = LineWidth / 2f;
+        float left = -CourtWidth / 2f;
+        float right = CourtWidth / 2f;
+        float baselineZ = HalfCourtLength - half;
+        float freeThrowZ = CourtGeometry.FreeThrowLineZ;
+        float laneX = CourtGeometry.LaneWidth / 2f;
+        Vector3 basket = CourtGeometry.BasketCenter;
+
+        // Boundary and half-court line.
+        CreateFloorLine("Baseline", lines, new Vector3(left, 0f, baselineZ), new Vector3(right, 0f, baselineZ), lineMat);
+        CreateFloorLine("HalfCourtLine", lines, new Vector3(left, 0f, half), new Vector3(right, 0f, half), lineMat);
+        CreateFloorLine("SidelineLeft", lines, new Vector3(left + half, 0f, 0f), new Vector3(left + half, 0f, HalfCourtLength), lineMat);
+        CreateFloorLine("SidelineRight", lines, new Vector3(right - half, 0f, 0f), new Vector3(right - half, 0f, HalfCourtLength), lineMat);
+        CreateArc("CenterCircle", lines, Vector3.zero, CourtGeometry.CenterCircleRadius - half, 0f, 180f, HalfCircleSegments, false, lineMat);
+
+        // Lane: two lane lines from the baseline to the free-throw line, 16 ft
+        // apart outside edge to outside edge, and the free-throw line across it.
+        CreateFloorLine("FreeThrowLine", lines, new Vector3(-laneX, 0f, freeThrowZ), new Vector3(laneX, 0f, freeThrowZ), lineMat);
+        CreateFloorLine("LaneLineLeft", lines, new Vector3(-laneX + half, 0f, freeThrowZ), new Vector3(-laneX + half, 0f, baselineZ), lineMat);
+        CreateFloorLine("LaneLineRight", lines, new Vector3(laneX - half, 0f, freeThrowZ), new Vector3(laneX - half, 0f, baselineZ), lineMat);
+
+        // Free-throw circle: the half outside the lane is solid, the half inside it dashed.
+        Vector3 freeThrowCenter = new Vector3(0f, 0f, freeThrowZ);
+        float freeThrowRadius = CourtGeometry.FreeThrowCircleRadius - half;
+        CreateArc("FreeThrowCircleTop", lines, freeThrowCenter, freeThrowRadius, -180f, 0f, HalfCircleSegments, false, lineMat);
+        CreateArc("FreeThrowCircleBottom", lines, freeThrowCenter, freeThrowRadius, 0f, 180f, DashedHalfCircleSegments, true, lineMat);
+
+        // Marks on the outside of both lane lines (7, 11 and 14 ft), and the block at 8 ft.
+        for (int side = -1; side <= 1; side += 2)
+        {
+            string sideName = side < 0 ? "Left" : "Right";
+            Vector3 laneEdge = new Vector3(side * laneX, 0f, 0f);
+            Vector3 outward = new Vector3(side * CourtGeometry.LaneMarkLength, 0f, 0f);
+            foreach (float fromBaseline in CourtGeometry.LaneMarksFromBaseline)
+            {
+                Vector3 z = new Vector3(0f, 0f, HalfCourtLength - fromBaseline - half);
+                CreateFloorLine($"LaneMark{sideName}{fromBaseline:0.00}", lines, laneEdge + z, laneEdge + z + outward, lineMat);
+            }
+
+            Vector3 blockZ = new Vector3(0f, 0f, HalfCourtLength - CourtGeometry.BlockFromBaseline - CourtGeometry.BlockWidth / 2f);
+            CreateFloorLine($"Block{sideName}", lines, laneEdge + blockZ, laneEdge + blockZ + outward, lineMat, CourtGeometry.BlockWidth);
+
+            // Hash marks on the sidelines (where the coaching box starts).
+            Vector3 sideline = new Vector3(side * CourtWidth / 2f, 0f, HalfCourtLength - CourtGeometry.HashMarkFromBaseline);
+            CreateFloorLine($"HashMark{sideName}", lines, sideline, sideline - new Vector3(side * CourtGeometry.HashMarkLength, 0f, 0f), lineMat);
+        }
+
+        // Restricted area: a half circle around the basket, with short straight
+        // lines back to the line of the backboard's face.
+        float restrictedRadius = CourtGeometry.RestrictedAreaRadius - half;
+        CreateArc("RestrictedArea", lines, basket, restrictedRadius, -180f, 0f, HalfCircleSegments, false, lineMat);
+        for (int side = -1; side <= 1; side += 2)
+        {
+            Vector3 x = new Vector3(side * restrictedRadius, 0f, 0f);
+            CreateFloorLine(side < 0 ? "RestrictedAreaLeft" : "RestrictedAreaRight", lines,
+                basket + x, new Vector3(x.x, 0f, CourtGeometry.BoardFaceZ), lineMat);
+        }
+
+        // 3-point line: an arc around the basket, then straight lines down the
+        // corners to the baseline, starting where the arc reaches 22 ft out.
+        float arcRadius = CourtGeometry.ThreePointRadius - half;
+        float cornerX = CourtGeometry.ThreePointCornerX - half;
+        float cornerDepth = Mathf.Sqrt(arcRadius * arcRadius - cornerX * cornerX);
+        float cornerAngle = Mathf.Atan2(cornerDepth, cornerX) * Mathf.Rad2Deg;   // ~22 degrees below the right sideline direction
+        CreateArc("ThreePointArc", lines, basket, arcRadius, -180f + cornerAngle, -cornerAngle, ThreePointArcSegments, false, lineMat);
+
+        // The arc meets the straight line at an angle, which leaves a small
+        // notch on the outside of the joint. Running the corner line on by this
+        // much (half a line width times the slope of the arc there) fills it.
+        float jointFill = half * cornerDepth / cornerX;
+        for (int side = -1; side <= 1; side += 2)
+        {
+            Vector3 corner = new Vector3(side * cornerX, 0f, basket.z - cornerDepth - jointFill);
+            CreateFloorLine(side < 0 ? "ThreePointCornerLeft" : "ThreePointCornerRight", lines,
+                corner, new Vector3(corner.x, 0f, baselineZ), lineMat);
+        }
+    }
+
+    // An arc of short straight line pieces around a center on the floor. With
+    // dashed, every other piece is left out. Each piece is a little longer than
+    // the gap between its ends, so the outside edges of neighbors meet.
+    private static void CreateArc(string name, Transform parent, Vector3 center, float radius,
+        float startAngle, float endAngle, int segments, bool dashed, Material material)
+    {
+        Transform arc = new GameObject(name).transform;
+        arc.SetParent(parent, false);
+        float step = (endAngle - startAngle) / segments;
+        float overlap = LineWidth / 2f * Mathf.Tan(Mathf.Abs(step) / 2f * Mathf.Deg2Rad);
+        for (int i = 0; i < segments; i++)
+        {
+            if (dashed && i % 2 == 1) continue;
+            Vector3 from = center + PointOnCircle(startAngle + step * i, radius);
+            Vector3 to = center + PointOnCircle(startAngle + step * (i + 1), radius);
+            CreateFloorLine($"{name}{i:00}", arc, from, to, material, LineWidth, overlap);
+        }
+    }
+
+    private static Vector3 PointOnCircle(float angle, float radius)
+    {
+        float radians = angle * Mathf.Deg2Rad;
+        return new Vector3(Mathf.Cos(radians), 0f, Mathf.Sin(radians)) * radius;
     }
 
     // Four invisible walls (colliders only, no mesh) standing on the outer edge of
@@ -203,7 +313,7 @@ public static class SandboxSceneBuilder
         Material rimMat = GetMaterial("Rim", new Color(1f, 0.35f, 0f));
         PhysicsMaterial rimPhysics = GetPhysicsMaterial("RimPhysics", RimBounce, RimFriction, PhysicsMaterialCombine.Average);
         float ringRadius = RimInnerRadius + RimTubeRadius;          // radius of the rod's centerline
-        float rimCenterZ = boardFaceZ - RimToBoardGap - RimInnerRadius;
+        float rimCenterZ = CourtGeometry.BasketZ;      // the board face, the 0.15 m gap, then the rim's radius
         Transform rim = new GameObject("Rim").transform;
         rim.SetParent(hoop, false);
         rim.localPosition = new Vector3(0f, RimHeight - RimTubeRadius, rimCenterZ);
@@ -469,6 +579,12 @@ public static class SandboxSceneBuilder
         armSettings.FindProperty("_shooter").objectReferenceValue = shooter;
         armSettings.FindProperty("_ball").objectReferenceValue = ball;
         armSettings.ApplyModifiedPropertiesWithoutUndo();
+
+        // Logs when the feet cross the 3-point line, the lane or the boundary.
+        CourtLineProbe probe = player.gameObject.AddComponent<CourtLineProbe>();
+        SerializedObject probeSettings = new SerializedObject(probe);
+        probeSettings.FindProperty("_body").objectReferenceValue = body;
+        probeSettings.ApplyModifiedPropertiesWithoutUndo();
     }
 
     // These live in Edit > Project Settings (Time and Physics). Setting them here,
@@ -530,9 +646,17 @@ public static class SandboxSceneBuilder
         return box;
     }
 
-    private static void CreateLine(string name, Transform parent, Vector3 position, Vector3 size, Material material)
+    // A painted line along the floor between two points (its centerline), with
+    // the ends pushed out by extendEnds. Visual only (no collider), 2 mm thick
+    // and sitting on the floor, so its top is raised enough not to flicker against it.
+    private static void CreateFloorLine(string name, Transform parent, Vector3 from, Vector3 to, Material material,
+        float width = LineWidth, float extendEnds = 0f)
     {
-        GameObject line = CreateBox(name, parent, position, size, material);
+        const float thickness = 0.002f;
+        Vector3 along = to - from;
+        Vector3 center = (from + to) / 2f + Vector3.up * (thickness / 2f);
+        GameObject line = CreateBox(name, parent, center, new Vector3(width, thickness, along.magnitude + extendEnds * 2f), material);
+        line.transform.localRotation = Quaternion.LookRotation(along);
         Object.DestroyImmediate(line.GetComponent<Collider>());
     }
 
