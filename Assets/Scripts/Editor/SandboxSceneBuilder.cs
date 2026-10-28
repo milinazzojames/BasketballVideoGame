@@ -519,7 +519,6 @@ public static class SandboxSceneBuilder
         serialized.FindProperty("_input").objectReferenceValue = player.GetComponent<PlayerInputReader>();
         serialized.FindProperty("_ball").objectReferenceValue = ball;
         serialized.FindProperty("_movement").objectReferenceValue = player.GetComponent<PlayerMovement>();
-        serialized.FindProperty("_cameraTransform").objectReferenceValue = Object.FindAnyObjectByType<Camera>().transform;
         // Protecting keeps the ball away from the hoop until there's a defender to keep it away from.
         serialized.FindProperty("_protectFrom").objectReferenceValue = rim;
         serialized.ApplyModifiedPropertiesWithoutUndo();

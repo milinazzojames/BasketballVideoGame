@@ -73,6 +73,18 @@ If a task tempts you toward out-of-scope work, stop and ask first.
 | L1 / R1 | Call screen / call play | Double team / call play |
 | Options | Pause | Pause |
 
+Dribble moves (right-stick flicks while dribbling). The stick's directions are fixed on the screen, whichever way the player or camera faces; "ball hand" means the stick side of the hand with the ball (right while it's in the right hand). Footwork goes by the player's body (a stepback always hops the way their back faces).
+
+| Right-stick flick | Move |
+|---|---|
+| Up | Crossover |
+| Toward the ball hand | Hesitation |
+| Toward the other hand | Between the legs |
+| Down | Stepback (hop back) |
+| Back diagonal, toward the other hand | Behind the back |
+| Back diagonal, toward the ball hand | Stepback to the ball side |
+| Half-circle roll | Spin |
+
 ## Physics conventions
 
 - **Units:** 1 Unity unit = 1 meter. Kilograms, seconds.
@@ -119,6 +131,8 @@ Each step is meant to be one or a few small PRs. Check off as they land. Passing
 6. [x] Dribbling: ball attached to the player with a simple dribble loop, then right-stick dribble moves
    - [x] Dribble loop, dribble hand (left/right), crossover (right-stick flick), pound dribble standing still, protect on L2, fumbles
    - [x] Between the legs, behind the back, hesitation, spin move (stick roll)
+   - [x] Fixed stick directions (see the table above), stepbacks with a hop (`PlayerMovement.Burst`), moves start as soon as the hand can reach the ball and a new flick interrupts the move that's going
+   - [ ] R2 explosive versions, with footwork for every move
    - [ ] Later: picking up the dribble ends it (double dribble rule)
 7. [x] Shooting: hold-and-release Square, shot meter/timing, a computed arc toward the rim with a make/miss window
    - [x] Layups inside 1.8 m: higher release, steeper arc, off the glass except straight on or along the baseline (dunks wait for animation)

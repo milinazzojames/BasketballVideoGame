@@ -10,17 +10,25 @@ using UnityEngine;
 //   - standing still (left stick centered) is a low, hard pound dribble
 //   - protecting (L2) is a low, tight dribble, with the ball kept on the side
 //     away from the hoop (later: away from the defender)
-//   - right-stick dribble moves. Each one is still physics: the hand pushes the
+//   - right-stick dribble moves. Each one is still physics: one hand pushes the
 //     ball down, guides it to one bounce, and it comes up into the hand it ends in.
-//     Directions are relative to the hand that has the ball:
-//       flick toward the other hand              = crossover (bounce in front)
-//       flick back, diagonally toward other hand = between the legs (bounce under the body)
-//       flick straight back                      = behind the back (bounce behind the body)
-//       flick forward or toward the ball's side  = hesitation (same hand, quick slowdown)
-//       roll the stick through a half circle     = spin move (body spins, ends in the other hand)
+//     A move never picks the ball up, so moves chain into combos.
+//     The stick's directions are fixed on the screen (up is always up, whichever
+//     way the player or camera faces); left and right are read against the hand
+//     with the ball ("toward the ball hand" = right while it's in the right hand):
+//       flick up                                    = crossover (bounce in front)
+//       flick toward the ball hand                  = hesitation (same hand, quick slowdown)
+//       flick toward the other hand                 = between the legs (bounce under the body)
+//       flick down                                  = stepback (same hand, yanked back, hop back)
+//       flick back diagonally toward the other hand = behind the back (bounce behind the body)
+//       flick back diagonally toward the ball hand  = stepback to the ball side (hop back and out)
+//       roll the stick through a half circle        = spin move (body spins, ends in the other hand)
+//     Footwork (hops, slowdowns) goes by the player's body, not the stick: a
+//     stepback always hops the way the player's back faces.
 //   - if the ball gets knocked too far away (say it hits the pole), the dribble is lost
-// Moves take a moment. A flick while a move is still on its way is queued and
-// starts when the ball reaches the new hand (a combo).
+// A move starts as soon as the hand can get to the ball (on its way down or
+// back up), and a new flick interrupts the move that's going: the ball heads
+// for the new move's bounce from wherever it is.
 // Fumbles (_allowFumbles, on by default): a move that can't get the ball to the
 // new hand, or a ball that comes up out of the arm's reach (say, a sloppy hard
 // cut at full sprint), fumbles the handle: the hand stops guiding the ball, and
@@ -34,16 +42,14 @@ using UnityEngine;
 public class PlayerDribbler : MonoBehaviour
 {
     private enum State { Loose, Dribbling, Fumbling, Holding }
-    private enum Move { None, Crossover, BetweenTheLegs, BehindTheBack, Hesitation, Spin }
+    private enum Move { None, Crossover, BetweenTheLegs, BehindTheBack, Hesitation, Stepback, StepbackBallSide, Spin }
 
     [SerializeField] private PlayerInputReader _input;
-    [Tooltip("Hesitations and spin moves slow down and turn the player through this.")]
+    [Tooltip("Hesitations, stepbacks and spin moves slow down, hop and turn the player through this.")]
     [SerializeField] private PlayerMovement _movement;
     [SerializeField] private Basketball _ball;
     [Tooltip("The player's body. While the player has the ball, it passes through every body part, like it passes through the capsule. The ball also has to come up within the arm's reach to be pushed. Optional.")]
     [SerializeField] private PlayerBody _playerBody;
-    [Tooltip("Right-stick flicks are read relative to this camera's court directions (up = toward the hoop), like the left stick. Uses the main camera if empty.")]
-    [SerializeField] private Transform _cameraTransform;
 
     [Header("Dribble (heights are the ball's center, in meters)")]
     [Tooltip("How high the ball comes back up to the hand when walking or running. About waist height.")]
@@ -87,22 +93,34 @@ public class PlayerDribbler : MonoBehaviour
     [Tooltip("While protecting, the ball is kept on the side away from this: the rim for now, a defender later. Empty = keep it in whichever hand has it.")]
     [SerializeField] private Transform _protectFrom;
 
-    [Header("Dribble moves (right-stick flicks)")]
-    [Tooltip("The right stick counts as centered below this push (0-1).")]
+    [Header("Dribble moves: reading the right stick")]
+    [Tooltip("The right stick counts as centered below this push (0-1). A flick is timed from the last moment the stick was this low.")]
     [SerializeField] private float _flickDeadZone = 0.3f;
     [Tooltip("A flick has to push the right stick at least this far (0-1).")]
-    [SerializeField] private float _flickThreshold = 0.8f;
-    [Tooltip("Seconds from centered to fully pushed for it to count as a flick. Slower pushes are ignored.")]
-    [SerializeField] private float _flickTime = 0.15f;
-    [Tooltip("A move starts when the ball comes up to the hand. A flick waits this many seconds for that (a walking dribble takes about 0.5 s), then it's dropped.")]
-    [SerializeField] private float _moveBufferTime = 0.6f;
-    [Tooltip("A flick also starts its move right away while the ball is still on its way down from the hand above this height (meters, ball center), since the hand rides on top of it until about knee height. Lower = moves start sooner after a flick; above the hand height = always wait for the ball to come back up.")]
-    [SerializeField] private float _moveStartMinHeight = 0.7f;
-    [Tooltip("A fumbled ball can be caught again when it's within this distance below the hand height, in meters (and within the catch radius).")]
+    [SerializeField] private float _flickThreshold = 0.6f;
+    [Tooltip("Seconds from under the dead zone to past the flick threshold for it to count as a flick. Slower pushes are ignored (and logged).")]
+    [SerializeField] private float _flickTime = 0.2f;
+    [Tooltip("After a flick, the stick has to come back under this push (0-1) before the next flick counts. Above the dead zone, so fast repeated flicks don't have to go all the way back to center.")]
+    [SerializeField] private float _flickRearm = 0.45f;
+    [Tooltip("Width of the 'up' direction (crossover), in degrees.")]
+    [SerializeField] private float _upSectorAngle = 60f;
+    [Tooltip("Width of the 'toward a hand' directions (hesitation, between the legs), in degrees. The front diagonals between up and the sides are split halfway.")]
+    [SerializeField] private float _sideSectorAngle = 60f;
+    [Tooltip("Width of the 'down' direction (stepback), in degrees.")]
+    [SerializeField] private float _downSectorAngle = 60f;
+    [Tooltip("Width of each back diagonal (behind the back, stepback to the ball side), in degrees, between down and the side.")]
+    [SerializeField] private float _backDiagonalSectorAngle = 30f;
+
+    [Header("Dribble moves: timing")]
+    [Tooltip("A move starts as soon as the hand can get to the ball: when the ball is above this height (meters, ball center) on its way down or back up, and within the arm's reach. Lower = less waiting after a flick. In a low dribble it's the hand height minus the hand reach instead.")]
+    [SerializeField] private float _moveTakeHeight = 0.6f;
+    [Tooltip("A flick waits at most this many seconds for the hand to get to the ball, then it's dropped (and logged).")]
+    [SerializeField] private float _moveBufferTime = 0.4f;
+    [Tooltip("A fumbled ball can be caught again when it's within this distance below the hand height, in meters (and within the catch radius). Also how far below a low dribble's hand height the hand reaches down to start a move.")]
     [SerializeField] private float _handReach = 0.3f;
-    [Tooltip("How fast the hand pushes the ball down to start a move, in m/s. Softer than a pound dribble, so the ball has time to get across: a 1.2 m crossover takes about 0.4 s at 3.5. Below about 3, it won't come back up to a walking hand height.")]
-    [SerializeField] private float _movePushSpeed = 3.5f;
-    [Tooltip("During a move, the hand takes the ball when it comes up to at least this height (meters), even from a low pound or protect dribble, so the ball has time to get across.")]
+    [Tooltip("How fast the hand pushes the ball down to start a move, in m/s. With the catch height below, 5 makes a move about 0.3 s from push to catch. Below about 3, it won't come back up to the hand.")]
+    [SerializeField] private float _movePushSpeed = 5f;
+    [Tooltip("At the end of a move, the hand takes the ball when it comes up to this height (meters, ball center), then dribbles on at the normal height.")]
     [SerializeField] private float _moveCatchHeight = 0.8f;
     [Tooltip("Crossover: how far in front of the hands the ball bounces, in meters (halfway between them, side to side).")]
     [SerializeField] private float _crossoverBounceAhead = 0.2f;
@@ -114,6 +132,16 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField, Range(0f, 1f)] private float _hesitationSpeed = 0.3f;
     [Tooltip("Hesitation: how long the slowdown lasts, in seconds. Afterwards the player speeds back up at their normal acceleration.")]
     [SerializeField] private float _hesitationTime = 0.35f;
+    [Tooltip("Stepback: the ball is yanked back on one bounce to this far behind where the hand usually dribbles it (meters), beside the feet.")]
+    [SerializeField] private float _stepbackPullBack = 0.4f;
+    [Tooltip("Stepback: how hard the hand pushes the ball down, in m/s. Harder than other moves, so it's a quick yank.")]
+    [SerializeField] private float _stepbackPushSpeed = 6f;
+    [Tooltip("Stepback: how far the player hops straight back (away from the way they face), in meters.")]
+    [SerializeField] private float _stepbackHop = 0.6f;
+    [Tooltip("Stepback: seconds the hop takes.")]
+    [SerializeField] private float _stepbackHopTime = 0.2f;
+    [Tooltip("Stepback to the ball side: degrees the hop turns out from straight back, toward the ball hand.")]
+    [SerializeField] private float _stepbackBallSideAngle = 45f;
     [Tooltip("Spin move: seconds for the body's full turn.")]
     [SerializeField] private float _spinTime = 0.45f;
     [Tooltip("Spin move: how far in front of the player (as they were facing when the spin started) the ball bounces, in meters.")]
@@ -122,12 +150,10 @@ public class PlayerDribbler : MonoBehaviour
     [SerializeField] private float _spinStickAngle = 180f;
     [Tooltip("Spin move: the stick has to roll that far within this many seconds of being pushed out.")]
     [SerializeField] private float _spinStickTime = 0.4f;
-    [Tooltip("A flick held out counts after this many seconds (or when the stick is let go). If the stick turns more than the flick turn limit first, it's a stick roll (spin), not a flick.")]
-    [SerializeField] private float _flickSettleTime = 0.12f;
-    [Tooltip("A flick turns into a stick roll once the stick has turned this many degrees while pushed out.")]
-    [SerializeField] private float _flickMaxTurn = 60f;
     [Tooltip("Largest speed the hand can give the ball during a move, in m/s on top of the player's own speed. A move that needs more can't get the ball to the other hand in time.")]
     [SerializeField] private float _maxMoveSpeed = 6f;
+    [Tooltip("A new move that interrupts another turns the ball from where the last move was sending it. With fumbles on, a turn that needs a bigger change of the ball's sideways speed than this (m/s) fumbles. A straight reversal (a quick double crossover) is about 8.")]
+    [SerializeField] private float _maxRedirectChange = 10f;
     [Tooltip("At the end of a move, the ball has to come up within this distance of the new hand (meters, along the floor), or (with fumbles on) the handle is fumbled. Also how close a fumbled ball has to come back to be caught.")]
     [SerializeField] private float _catchRadius = 0.3f;
     [Tooltip("A move that hasn't reached the new hand after this many seconds (say, the ball stopped bouncing) ends; with fumbles on, it's fumbled.")]
@@ -163,23 +189,29 @@ public class PlayerDribbler : MonoBehaviour
     private bool _wasRising;
     private float _letGoTime = float.NegativeInfinity;
 
-    private int _hand;   // +1 = right hand, -1 = left hand
+    private int _hand;       // +1 = right hand, -1 = left hand
+    private int _pushHand;   // the hand that started the current move
     private Move _move = Move.None;
     private bool _moveBounced;
     private float _moveStartTime;
-    private Move _pendingMove = Move.None;
-    private float _pendingTime;
+    private float _moveFlickTime;
+    private int _moveGesture;
+    private Move _requestedMove = Move.None;
+    private float _requestedTime;
+    private int _requestedGesture;
     private Quaternion _moveStartRotation;
     private float _lastYaw;
     private float _turnRate;
-    private bool _stickCentered;
-    private float _stickCenteredTime;
+    // Right stick: a "gesture" is one push out of the stick, counted so a roll
+    // can tell whether the move that's going came from the same push.
+    private bool _stickArmed;
+    private float _stickLowTime;
+    private float _stickPeak;
     private bool _stickOut;
     private Vector2 _lastStick;
     private float _stickTurned;
     private float _stickOutTime;
-    private bool _flickWaiting;
-    private Vector2 _flickDirection;
+    private int _gesture;
     private float _fumbleStartTime;
     private float _passThroughUntil = float.NegativeInfinity;
     private float _currentHandHeight;
@@ -199,8 +231,8 @@ public class PlayerDribbler : MonoBehaviour
     // the hand the ball is going to.
     public int BallHand => _hand;
     // The hand touching the ball: during a move, until the ball bounces, it's
-    // still the hand that pushed it; then it's the new hand.
-    public int TouchHand => _move != Move.None && _move != Move.Hesitation && !_moveBounced ? -_hand : _hand;
+    // still the hand that pushed it; then it's the hand it's going to.
+    public int TouchHand => _move != Move.None && !_moveBounced ? _pushHand : _hand;
     // The height (ball center) the hand meets the ball at right now, in meters.
     public float CurrentHandHeight => _currentHandHeight;
     // Where the held ball is being carried to this step.
@@ -216,7 +248,6 @@ public class PlayerDribbler : MonoBehaviour
         if (_input == null) _input = GetComponent<PlayerInputReader>();
         if (_movement == null) _movement = GetComponent<PlayerMovement>();
         if (_playerBody == null) _playerBody = GetComponent<PlayerBody>();
-        if (_cameraTransform == null && Camera.main != null) _cameraTransform = Camera.main.transform;
         _hand = _startInRightHand ? 1 : -1;
     }
 
@@ -322,12 +353,16 @@ public class PlayerDribbler : MonoBehaviour
 
         GetDribbleHeightAndPush(out float handHeight, out float pushSpeed);
         KeepBallAwayFromDefense();
-        // A move's ball comes up higher than a low pound or protect dribble before the hand takes it.
-        if (_move != Move.None) handHeight = Mathf.Max(handHeight, _moveCatchHeight);
+        // At the end of a move the hand takes the ball at the catch height.
+        if (_move != Move.None) handHeight = _moveCatchHeight;
         _currentHandHeight = handHeight;
 
-        // A flick that waited too long for the ball to come up to the hand is dropped.
-        if (_pendingMove != Move.None && Time.time - _pendingTime > _moveBufferTime) _pendingMove = Move.None;
+        // A flick that waited too long for the hand to get to the ball is dropped.
+        if (_requestedMove != Move.None && Time.time - _requestedTime > _moveBufferTime)
+        {
+            Debug.Log($"Dribble move {_requestedMove} dropped: the hand couldn't get to the ball within {_moveBufferTime:0.00} s.");
+            _requestedMove = Move.None;
+        }
 
         // Up and down: gravity and the floor bounce do the work. The hand only
         // pushes the ball back down when it comes up to the hand, or when it
@@ -337,19 +372,29 @@ public class PlayerDribbler : MonoBehaviour
         bool toppedOutLow = vertical <= 0f && _wasRising;
         if (_move != Move.None && !_moveBounced && vertical > 0f) _moveBounced = true;
 
-        if (reachedHand || toppedOutLow)
+        if (_requestedMove != Move.None && CanTakeForMove(ballPosition, handHeight))
+        {
+            // A flicked move starts as soon as the hand can get to the ball, on
+            // its way down or back up, even in the middle of another move.
+            vertical = StartMove(ballPosition, vertical);
+            // Turning the ball for an interrupting move can be more than the hand can do.
+            if (_state != State.Dribbling) return;
+            _ball.Body.angularVelocity = Vector3.zero;
+        }
+        else if (reachedHand || toppedOutLow)
         {
             // The end of a move: the ball has to come up to the new hand.
             if (_move != Move.None && _moveBounced)
             {
                 Vector3 catchPoint = MoveCatchPoint();
-                _move = Move.None;
                 // Without fumbles, a miss is just guided back to the hand on the next bounce.
                 if (_allowFumbles && FlatDistance(ballPosition, catchPoint) > _catchRadius)
                 {
                     Fumble($"Fumbled the move: the ball came up {FlatDistance(ballPosition, catchPoint):0.00} m from the new hand (catch radius {_catchRadius:0.00}).");
                     return;
                 }
+                Debug.Log($"Dribble move {_move} reached the hand {Time.time - _moveFlickTime:0.00} s after the flick ({Time.time - _moveStartTime:0.00} s after it started).");
+                _move = Move.None;
             }
 
             // The hand is on the end of an arm: if the ball comes up too far
@@ -361,18 +406,9 @@ public class PlayerDribbler : MonoBehaviour
                 return;
             }
 
-            // A flicked move starts here, as the ball comes up to the hand;
-            // otherwise it's a normal push back down.
-            vertical = _pendingMove != Move.None ? StartMove() : -pushSpeed;
+            vertical = -pushSpeed;
             // A real hand also stops the ball spinning from its last floor contact.
             _ball.Body.angularVelocity = Vector3.zero;
-        }
-        else if (_pendingMove != Move.None && _move == Move.None && vertical <= 0f && ballPosition.y >= _moveStartMinHeight)
-        {
-            // Flicked while the ball is still under the hand on its way down: the
-            // hand redirects it now instead of waiting a whole bounce. It keeps
-            // whichever is faster, its current speed down or the move's push.
-            vertical = Mathf.Min(vertical, StartMove());
         }
         else if (ballPosition.y < _ball.Radius + 0.02f && Mathf.Abs(vertical) < 0.2f)
         {
@@ -445,8 +481,12 @@ public class PlayerDribbler : MonoBehaviour
             case Move.BehindTheBack:
                 return _body.position + _body.rotation * new Vector3(0f, 0f, -_behindTheBackBounceDistance);
             case Move.Hesitation:
-                // Same hand: just a slower, higher bounce while the feet stop.
+                // Same hand: just a quick bounce while the feet stop.
                 return HandPoint();
+            case Move.Stepback:
+            case Move.StepbackBallSide:
+                // Same hand, yanked back from in front to beside the feet as the player hops.
+                return HandPoint() - _body.rotation * Vector3.forward * _stepbackPullBack;
             case Move.Spin:
                 // The ball is planted in front while the body spins around it. Uses
                 // the facing from the start of the spin, since the body is turning.
@@ -458,32 +498,48 @@ public class PlayerDribbler : MonoBehaviour
         }
     }
 
-    // Reads the right stick. A flick is a quick push from centered to far out;
-    // a roll is the stick going around while pushed out. A roll starts with a
-    // push out too, so a flick only counts once the stick is let go or has held
-    // still for a moment without turning.
+    // Reads the right stick. A flick is a quick push from near the center to
+    // past the flick threshold; it picks its move the moment it's recognized.
+    // A roll is the stick going on around while pushed out: half a circle soon
+    // enough is a spin, which replaces the move the same push started.
     private void ReadDribbleStick()
     {
         Vector2 stick = _input.DribbleStick;
-        if (stick.magnitude < _flickDeadZone)
+        float push = stick.magnitude;
+
+        // The flick is timed from the last moment the stick was near the center
+        // (or from when it came back under the re-arm level after the last flick).
+        if (push < _flickDeadZone || (!_stickArmed && push < _flickRearm)) _stickLowTime = Time.time;
+
+        if (push < _flickRearm)
         {
-            if (_flickWaiting) ConfirmFlick();
-            _stickCentered = true;
+            if (_stickArmed && _stickPeak >= _flickRearm)
+            {
+                Debug.Log($"Flick missed: the stick only got to {_stickPeak:0.00} (a flick needs {_flickThreshold:0.00}).");
+            }
+            // Back in: ready for the next flick.
+            _stickArmed = true;
+            _stickPeak = push;
             _stickOut = false;
-            _stickCenteredTime = Time.time;
             return;
         }
 
-        if (_stickCentered && stick.magnitude >= _flickThreshold)
+        if (_stickArmed)
         {
-            // Pushed out. The stick has to come back to center before the next flick.
-            _stickCentered = false;
+            _stickPeak = Mathf.Max(_stickPeak, push);
+            if (push < _flickThreshold) return;
+
+            // Pushed out. From here, watch for a roll.
+            _stickArmed = false;
             _stickOut = true;
             _lastStick = stick;
             _stickTurned = 0f;
             _stickOutTime = Time.time;
-            _flickDirection = stick;
-            _flickWaiting = Time.time - _stickCenteredTime <= _flickTime;
+            _gesture++;
+
+            float pushTime = Time.time - _stickLowTime;
+            if (pushTime <= _flickTime) OnFlick(stick);
+            else Debug.Log($"Flick too slow: {pushTime:0.00} s from under {_flickDeadZone:0.00} to {_flickThreshold:0.00} (limit {_flickTime:0.00} s).");
             return;
         }
         if (!_stickOut) return;
@@ -491,83 +547,173 @@ public class PlayerDribbler : MonoBehaviour
         // Rolling the stick around: half a circle (either way) is a spin move.
         _stickTurned += Vector2.SignedAngle(_lastStick, stick);
         _lastStick = stick;
-        if (Mathf.Abs(_stickTurned) > _flickMaxTurn) _flickWaiting = false;
         if (Mathf.Abs(_stickTurned) >= _spinStickAngle && Time.time - _stickOutTime <= _spinStickTime)
         {
             _stickOut = false;
-            OnMoveInput(Move.Spin);
+            OnSpinRoll();
+        }
+    }
+
+    private void OnFlick(Vector2 stick)
+    {
+        Move move = GetFlickMove(stick);
+        float stickAngle = Mathf.Atan2(stick.x, stick.y) * Mathf.Rad2Deg;
+        Debug.Log($"Flick: stick at {stickAngle:0} deg (0 = up, 90 = right), ball in the {HandName(_hand)} hand: {move}.");
+        RequestMove(move, _gesture);
+    }
+
+    // The stick kept rolling into a spin. If the flick that started the roll has
+    // already started its move, that move becomes the spin, as if the spin had
+    // been picked from the start: the ball goes to the other hand from the one
+    // that pushed it, and any footwork the flick started stops.
+    private void OnSpinRoll()
+    {
+        if (_move != Move.None && _move != Move.Spin && _moveGesture == _gesture)
+        {
+            Debug.Log($"Dribble move {_move} turned into a Spin (the stick kept rolling).");
+            _move = Move.Spin;
+            _hand = -_pushHand;
+            if (_movement != null)
+            {
+                _movement.CancelMoveFootwork();
+                _movement.Spin(-360f * _pushHand, _spinTime);
+            }
             return;
         }
-
-        if (_flickWaiting && Time.time - _stickOutTime >= _flickSettleTime) ConfirmFlick();
+        Debug.Log("Stick roll: Spin.");
+        RequestMove(Move.Spin, _gesture);
     }
 
-    private void ConfirmFlick()
-    {
-        _flickWaiting = false;
-        OnMoveInput(GetFlickMove(_flickDirection));
-    }
-
-    // Which move a flick is, from its direction relative to the hand with the ball.
+    // Which move a flick is. The stick's directions are fixed (up is always up),
+    // with left and right read against the hand that has the ball.
     private Move GetFlickMove(Vector2 stick)
     {
-        Vector2 local = StickToPlayerFrame(stick);   // x = player's right, y = player's forward
-        float towardBallSide = local.x * _hand;       // + = toward the hand with the ball
-        if (local.y < -0.5f) return towardBallSide < -0.3f ? Move.BetweenTheLegs : Move.BehindTheBack;
-        if (towardBallSide < -0.5f) return Move.Crossover;
-        return Move.Hesitation;
+        // 0 = up, +90 = toward the ball hand, -90 = toward the other hand, 180 = down.
+        float angle = Mathf.Atan2(stick.x * _hand, stick.y) * Mathf.Rad2Deg;
+        float fromUp = Mathf.Abs(angle);
+        bool towardBallHand = angle > 0f;
+
+        float downStart = 180f - _downSectorAngle / 2f;
+        float backDiagonalStart = downStart - _backDiagonalSectorAngle;
+        // The front diagonals are split halfway between up and the side.
+        float frontSplit = (_upSectorAngle / 2f + 90f - _sideSectorAngle / 2f) / 2f;
+
+        if (fromUp >= downStart) return Move.Stepback;
+        if (fromUp >= backDiagonalStart) return towardBallHand ? Move.StepbackBallSide : Move.BehindTheBack;
+        if (fromUp > frontSplit) return towardBallHand ? Move.Hesitation : Move.BetweenTheLegs;
+        return Move.Crossover;
     }
 
-    private void OnMoveInput(Move move)
+    // Asks for a move. It starts as soon as the hand can get to the ball (see
+    // Dribble). A newer request replaces one that's still waiting. The gesture
+    // is the stick push it came from (-1 for none).
+    private void RequestMove(Move move, int gesture)
     {
-        // A new move while the last one is still on its way waits and starts
-        // when the ball reaches the new hand (or is dropped after the move
-        // buffer time). It used to fumble with fumbles on, which lost the ball
-        // on quick double flicks in normal play.
-        if (_move != Move.None) Debug.Log($"Dribble move {move} queued behind {_move}.");
-        RequestMove(move);
+        _requestedMove = move;
+        _requestedTime = Time.time;
+        _requestedGesture = gesture;
     }
 
-    private void RequestMove(Move move)
+    // The hand can push the ball to start a move: it's high enough (on its way
+    // down or back up) and within the arm's reach of the hand it's in.
+    private bool CanTakeForMove(Vector3 ballPosition, float handHeight)
     {
-        _pendingMove = move;
-        _pendingTime = Time.time;
+        float takeHeight = Mathf.Min(_moveTakeHeight, handHeight - _handReach);
+        return ballPosition.y >= takeHeight && IsWithinReach(ballPosition, _hand);
     }
 
-    // Starts the waiting move and returns the ball's new up-down speed: the hand
-    // pushes it down (the sideways part comes from SteerMove).
-    private float StartMove()
+    // Starts the requested move and returns the ball's new up-down speed: the
+    // hand pushes it down (the sideways part comes from SteerMove). The hand the
+    // ball is in (or heading to, mid-move) pushes it, from wherever it is.
+    private float StartMove(Vector3 ballPosition, float vertical)
     {
-        _move = _pendingMove;
-        _pendingMove = Move.None;
+        Move interrupted = _move;
+        float interruptedAge = Time.time - _moveStartTime;
+
+        _move = _requestedMove;
+        _requestedMove = Move.None;
         _moveBounced = false;
         _moveStartTime = Time.time;
+        _moveFlickTime = _requestedTime;
+        _moveGesture = _requestedGesture;
         _moveStartRotation = _body.rotation;
-        Debug.Log($"Dribble move: {_move}");
+        _pushHand = _hand;
 
-        if (_move == Move.Hesitation)
+        // Footwork goes by the player's body: x = their right, z = their forward.
+        if (_movement != null)
         {
-            if (_movement != null) _movement.SlowDown(_hesitationSpeed, _hesitationTime);
+            _movement.CancelMoveFootwork();
+            switch (_move)
+            {
+                case Move.Hesitation:
+                    _movement.SlowDown(_hesitationSpeed, _hesitationTime);
+                    break;
+                case Move.Stepback:
+                    _movement.Burst(Vector3.back, _stepbackHop, _stepbackHopTime);
+                    break;
+                case Move.StepbackBallSide:
+                    float radians = _stepbackBallSideAngle * Mathf.Deg2Rad;
+                    _movement.Burst(new Vector3(Mathf.Sin(radians) * _pushHand, 0f, -Mathf.Cos(radians)), _stepbackHop, _stepbackHopTime);
+                    break;
+                case Move.Spin:
+                    // A spin turns away from the ball's side (right hand = spin to the left).
+                    _movement.Spin(-360f * _pushHand, _spinTime);
+                    break;
+            }
         }
-        else
+
+        // These moves end in the other hand; the rest stay in the same hand.
+        if (_move == Move.Crossover || _move == Move.BetweenTheLegs || _move == Move.BehindTheBack || _move == Move.Spin)
         {
-            // A spin turns away from the ball's side (right hand = spin to the left).
-            if (_move == Move.Spin && _movement != null) _movement.Spin(-360f * _hand, _spinTime);
-            // Every other move ends in the other hand.
             _hand = -_hand;
         }
-        return -_movePushSpeed;
+
+        float push = _move == Move.Stepback || _move == Move.StepbackBallSide ? _stepbackPushSpeed : _movePushSpeed;
+        // On its way down, the ball keeps whichever is faster: its own speed or the push.
+        float newVertical = Mathf.Min(vertical, -push);
+
+        string interrupt = interrupted != Move.None ? $", interrupting {interrupted} {interruptedAge:0.00} s in" : "";
+        Debug.Log($"Dribble move: {_move}, {HandName(_pushHand)} hand to {HandName(_hand)}, started {Time.time - _moveFlickTime:0.00} s after the flick{interrupt}.");
+
+        if (interrupted != Move.None) CheckRedirect(ballPosition, newVertical);
+        return newVertical;
+    }
+
+    // An interrupting move turns the ball from wherever the last move was
+    // sending it, toward the new bounce. The faster it was going the other way
+    // and the less time is left to get there, the bigger the change of speed;
+    // with fumbles on, more than the hand can give it fumbles it.
+    private void CheckRedirect(Vector3 ballPosition, float vertical)
+    {
+        Vector3 toBounce = MoveBouncePoint() - ballPosition;
+        toBounce.y = 0f;
+        float time = TimeToFall(ballPosition.y - _ball.Radius, -vertical);
+        Vector3 needed = Vector3.ClampMagnitude(toBounce / Mathf.Max(time, 0.05f), _maxMoveSpeed);
+
+        Vector3 current = _ball.Body.linearVelocity - _body.linearVelocity;
+        current.y = 0f;
+        float change = (needed - current).magnitude;
+        Debug.Log($"Redirect: {change:0.0} m/s change of the ball's speed (max {_maxRedirectChange:0.0}).");
+        if (_allowFumbles && change > _maxRedirectChange)
+        {
+            Fumble($"Fumbled the move: turning the ball for the {_move} took {change:0.0} m/s (max redirect {_maxRedirectChange:0.0}).");
+        }
+    }
+
+    private static string HandName(int hand)
+    {
+        return hand > 0 ? "right" : "left";
     }
 
     // While protecting, if the ball is on the side facing the hoop (later: the
     // defender), cross it over to the other hand.
     private void KeepBallAwayFromDefense()
     {
-        if (_protectFrom == null || _input.Protect < 0.5f || _move != Move.None || _pendingMove != Move.None) return;
+        if (_protectFrom == null || _input.Protect < 0.5f || _move != Move.None || _requestedMove != Move.None) return;
 
         Vector3 local = Quaternion.Inverse(_body.rotation) * (_protectFrom.position - _body.position);
         // Only when the hoop is clearly off to one side; straight ahead either hand is fine.
-        if (Mathf.Abs(local.x) > 0.5f && Mathf.Sign(local.x) == _hand) RequestMove(Move.Crossover);
+        if (Mathf.Abs(local.x) > 0.5f && Mathf.Sign(local.x) == _hand) RequestMove(Move.Crossover, -1);
     }
 
     // The hand stops guiding the ball: it flies on with whatever speed it has.
@@ -578,7 +724,7 @@ public class PlayerDribbler : MonoBehaviour
         string move = _move != Move.None ? $", {_move} {Time.time - _moveStartTime:0.00} s in" : "";
         Debug.Log($"{reason} Speed {speed.magnitude:0.0} m/s, sprint {_input.Sprint:0.00}, turning {_turnRate:0} deg/s{move}.");
         _move = Move.None;
-        _pendingMove = Move.None;
+        _requestedMove = Move.None;
         _fumbleStartTime = Time.time;
         _state = State.Fumbling;
     }
@@ -636,8 +782,13 @@ public class PlayerDribbler : MonoBehaviour
     // shoulder to the ball's center. Without a body, the hand reaches anywhere.
     private bool IsWithinReach(Vector3 ballPosition)
     {
+        return IsWithinReach(ballPosition, _hand);
+    }
+
+    private bool IsWithinReach(Vector3 ballPosition, int hand)
+    {
         if (_playerBody == null) return true;
-        Vector3 shoulder = _body.position + _body.rotation * _playerBody.GetShoulderLocal(_hand);
+        Vector3 shoulder = _body.position + _body.rotation * _playerBody.GetShoulderLocal(hand);
         return Vector3.Distance(shoulder, ballPosition) <= _playerBody.ArmReach + _ball.Radius + _reachSlack;
     }
 
@@ -672,7 +823,7 @@ public class PlayerDribbler : MonoBehaviour
         _state = state;
         _wasRising = false;
         _move = Move.None;
-        _pendingMove = Move.None;
+        _requestedMove = Move.None;
         _hasCarryTarget = false;
         _passThroughUntil = float.NegativeInfinity;
         // While the player has the ball, it passes through their capsule and body
@@ -728,16 +879,6 @@ public class PlayerDribbler : MonoBehaviour
         Vector3 point = _body.position + _body.rotation * Vector3.forward * _holdForward;
         point.y = _holdHeight;
         return point;
-    }
-
-    // The right stick, turned from court directions (up = toward the hoop, like
-    // the left stick) into the player's own directions (x = player's right,
-    // y = player's forward).
-    private Vector2 StickToPlayerFrame(Vector2 stick)
-    {
-        Vector3 world = BehindPlayerCamera.StickToFloor(stick, _cameraTransform);
-        Vector3 local = Quaternion.Inverse(_body.rotation) * world;
-        return new Vector2(local.x, local.z).normalized;
     }
 
     // Seconds for the ball to drop a height (meters) when already moving down at

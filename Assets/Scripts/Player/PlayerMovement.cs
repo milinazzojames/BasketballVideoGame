@@ -24,6 +24,12 @@ public class PlayerMovement : MonoBehaviour
     private bool _hasFacingOverride;
     private Vector3 _facingOverride;
     private float _facingOverrideSpeed;
+    private bool _bursting;
+    private Vector3 _burstVelocity;
+    private float _burstUntil;
+    private Vector3 _burstStart;
+    private float _burstDistance;
+    private Vector3 _burstLocalDirection;
 
     // Current speed along the floor in m/s (for the debug overlay later).
     public float CurrentSpeed { get; private set; }
@@ -45,6 +51,34 @@ public class PlayerMovement : MonoBehaviour
     {
         _spinDegreesLeft = degrees;
         _spinSpeed = Mathf.Abs(degrees) / Mathf.Max(seconds, 0.01f);
+    }
+
+    // Moves the player a set distance over this many seconds, in a direction
+    // relative to the way they face (x = their right, z = their forward), like
+    // the hop of a stepback. It overrides the stick for that time and the body
+    // keeps facing the same way (a spin still turns it); then the stick takes
+    // over again from a standstill. A new burst replaces one that's going.
+    public void Burst(Vector3 localDirection, float distance, float seconds)
+    {
+        localDirection.y = 0f;
+        if (localDirection.sqrMagnitude < 0.0001f || distance <= 0f) return;
+        if (_bursting) EndBurst();
+
+        _burstLocalDirection = localDirection.normalized;
+        _burstVelocity = _rigidbody.rotation * _burstLocalDirection * (distance / Mathf.Max(seconds, 0.01f));
+        _burstUntil = Time.time + seconds;
+        _burstStart = _rigidbody.position;
+        _burstDistance = distance;
+        _bursting = true;
+    }
+
+    // Stops any dribble-move footwork that's still going (a hesitation's
+    // slowdown, a spin, a burst), so a new move starts from a clean slate.
+    public void CancelMoveFootwork()
+    {
+        _slowDownUntil = float.NegativeInfinity;
+        _spinDegreesLeft = 0f;
+        if (_bursting) EndBurst();
     }
 
     // Turns the body toward a direction for this physics step, at this turn speed
@@ -98,6 +132,16 @@ public class PlayerMovement : MonoBehaviour
     private void FixedUpdate()
     {
         float dt = Time.fixedDeltaTime;
+        if (_bursting)
+        {
+            if (Time.time < _burstUntil)
+            {
+                BurstStep(dt);
+                return;
+            }
+            EndBurst();
+        }
+
         Vector2 stick = _input.Move;
         bool stickPushed = stick.sqrMagnitude > 0.0001f;
         Vector3 stickDirection = GetCourtRelativeDirection(stick);
@@ -170,14 +214,7 @@ public class PlayerMovement : MonoBehaviour
             return;
         }
 
-        // A spin turns the body at its own speed until it's done.
-        if (_spinDegreesLeft != 0f)
-        {
-            float step = Mathf.Sign(_spinDegreesLeft) * Mathf.Min(_spinSpeed * dt, Mathf.Abs(_spinDegreesLeft));
-            _spinDegreesLeft -= step;
-            _rigidbody.MoveRotation(_rigidbody.rotation * Quaternion.Euler(0f, step, 0f));
-            return;
-        }
+        if (TurnSpin(dt)) return;
 
         // Otherwise face the way we're actually moving, so the feet don't slide
         // sideways. Nearly stopped, face the stick instead, so the player can
@@ -189,6 +226,41 @@ public class PlayerMovement : MonoBehaviour
             _rigidbody.MoveRotation(Quaternion.RotateTowards(
                 _rigidbody.rotation, targetRotation, _config.TurnSpeed * dt));
         }
+    }
+
+    // A spin turns the body at its own speed until it's done. Returns true while it's turning.
+    private bool TurnSpin(float dt)
+    {
+        if (_spinDegreesLeft == 0f) return false;
+        float step = Mathf.Sign(_spinDegreesLeft) * Mathf.Min(_spinSpeed * dt, Mathf.Abs(_spinDegreesLeft));
+        _spinDegreesLeft -= step;
+        _rigidbody.MoveRotation(_rigidbody.rotation * Quaternion.Euler(0f, step, 0f));
+        return true;
+    }
+
+    // During a burst the player moves at the burst's speed, whatever the stick
+    // says, and only a spin turns the body.
+    private void BurstStep(float dt)
+    {
+        Vector3 velocity = _rigidbody.linearVelocity;
+        _rigidbody.linearVelocity = new Vector3(_burstVelocity.x, velocity.y, _burstVelocity.z);
+        CurrentSpeed = _burstVelocity.magnitude;
+        IsPlanting = false;
+        _hasFacingOverride = false;
+        TurnSpin(dt);
+    }
+
+    // A burst lands: the player stops along the floor and the stick takes over again.
+    private void EndBurst()
+    {
+        _bursting = false;
+        Vector3 moved = _rigidbody.position - _burstStart;
+        moved.y = 0f;
+        Debug.Log($"Burst: moved {moved.magnitude:0.00} m of {_burstDistance:0.00} m, toward (right {_burstLocalDirection.x:0.00}, forward {_burstLocalDirection.z:0.00}) of the body.");
+
+        Vector3 velocity = _rigidbody.linearVelocity;
+        _rigidbody.linearVelocity = new Vector3(0f, velocity.y, 0f);
+        CurrentSpeed = 0f;
     }
 
     // Converts the 2D stick into a flat 3D direction on the court
